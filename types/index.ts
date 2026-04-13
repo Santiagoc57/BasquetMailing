@@ -45,6 +45,7 @@ export interface TimeZoneConfig {
   name: string
   diffHours: number
   label: string
+  enabled?: boolean
 }
 
 export interface AppState {

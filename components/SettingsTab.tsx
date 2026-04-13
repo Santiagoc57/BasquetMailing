@@ -107,6 +107,7 @@ export const SettingsTab: React.FC = () => {
   const [gradientStart, setGradientStart] = useState("#EB5B27")
   const [gradientEnd, setGradientEnd] = useState("#FF8C00")
   const [gradientDirection, setGradientDirection] = useState<"to right" | "to left" | "to bottom" | "to top">("to right")
+  const visibleTimeZones = timeZones.filter((tz) => tz.enabled !== false)
 
   // Fixture dummy para preview
   const dummyHomeTeam: Team = {
@@ -343,8 +344,8 @@ export const SettingsTab: React.FC = () => {
             onChange={(e) => setExportHorario(e.target.value)}
             style={{ fontFamily: "Poppins, sans-serif" }}
           >
-            <option value="BOL">BOL</option>
-            <option value="ARG">ARG / URU / CHI</option>
+            <option value="BOL">BOL / CHI</option>
+            <option value="ARG">ARG / BRA / URU</option>
             <option value="ECU">ECU</option>
           </select>
         </div>
@@ -1052,7 +1053,7 @@ export const SettingsTab: React.FC = () => {
                   fontFamily: "Poppins, sans-serif",
                 }}
               >
-                {timeZones.map((tz, i) => (
+                {visibleTimeZones.map((tz, i) => (
                   <React.Fragment key={`preview-${tz.name}`}>
                     <div className="flex-1 flex flex-col items-center justify-center h-full">
                       {showTeamNames ? (
@@ -1112,7 +1113,7 @@ export const SettingsTab: React.FC = () => {
                             : ""}
                       </div>
                     </div>
-                    {i < timeZones.length - 1 && showDividers && (
+                    {i < visibleTimeZones.length - 1 && showDividers && (
                       <div
                         className="w-px bg-white"
                         style={{

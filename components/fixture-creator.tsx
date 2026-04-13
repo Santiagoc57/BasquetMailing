@@ -213,7 +213,8 @@ export default function FixtureCreator() {
 
     lines.forEach((line) => {
       // Formato esperado: DD/MM HH:MM EquipoLocal-EquipoVisitante
-      const match = line.match(/(\d{1,2})\/(\d{1,2})\s+(\d{1,2}:\d{2})\s+([^-]+)-(.+)/)
+      // También acepta dos o más espacios entre equipos.
+      const match = line.match(/(\d{1,2})\/(\d{1,2})\s+(\d{1,2}:\d{2})\s+(.+?)(?:\s*-\s*|\s{2,})(.+)/)
 
       if (match) {
         const [_, day, month, time, homeTeamName, awayTeamName] = match
@@ -479,14 +480,7 @@ export default function FixtureCreator() {
                           {showDividers && <div className="w-px h-full bg-white"></div>}
 
                           <div className="flex-1 flex flex-col items-center justify-center h-full">
-                            {showTimeLabels && <div className="text-center mb-2">ARG/BRA/URU/CHI</div>}
-                            <div className="text-center text-4xl font-bold">{fixture.times.ARG}</div>
-                          </div>
-
-                          {showDividers && <div className="w-px h-full bg-white"></div>}
-
-                          <div className="flex-1 flex flex-col items-center justify-center h-full">
-                            {showTimeLabels && <div className="text-center mb-2">BOL</div>}
+                            {showTimeLabels && <div className="text-center mb-2">BOL / CHI</div>}
                             <div className="text-center text-4xl font-bold">{fixture.times.BOL}</div>
                           </div>
                         </div>
@@ -716,10 +710,10 @@ export default function FixtureCreator() {
 
             <div className="text-sm space-y-2">
               <p>
-                <strong>Argentina/Brasil/Uruguay/Chile:</strong> Hora base (la que ingresas)
+                <strong>Argentina/Brasil/Uruguay:</strong> Hora base (la que ingresas)
               </p>
               <p>
-                <strong>Bolivia:</strong> 1 hora menos que Argentina
+                <strong>Bolivia/Chile:</strong> 1 hora menos que Argentina
               </p>
               <p>
                 <strong>Ecuador:</strong> 2 horas menos que Argentina

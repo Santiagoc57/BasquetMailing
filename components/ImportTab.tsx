@@ -34,6 +34,8 @@ export const ImportTab: React.FC = () => {
             Nombre de Liga
             <br />
             DD/MM HH:MM EquipoLocal-EquipoVisitante
+            <br />
+            o DD/MM HH:MM EquipoLocal  EquipoVisitante
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -45,6 +47,9 @@ export const ImportTab: React.FC = () => {
               placeholder="Euroliga
 23/5 12:00 Fenerbahce-Panathinaikos
 23/5 15:00 Olympiacos-Monaco
+
+Italia
+15/03 16:00 Virtus Olidata Bologna  EA7 Emporio Armani Milano
 
 Endesa
 25/5 8:00 Tenerife-Valencia

@@ -13,7 +13,8 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { ToastAction } from "@/components/ui/toast"
-import { Upload, Download, Edit, Trash, ChevronDown, Palette, Calendar, Users, Trophy, Settings } from "lucide-react"
+import { Upload, Download, Edit, Trash, ChevronDown, Palette, Calendar, Users, Trophy, Settings, LayoutTemplate } from "lucide-react"
+import GraphicFixtureTab from "@/components/GraphicFixtureTab"
 import { useToast } from "@/hooks/use-toast"
 import html2canvas from "html2canvas"
 import JSZip from "jszip"
@@ -32,6 +33,60 @@ const normalizeTeamName = (name: string) =>
     .replace(/[\u0300-\u036f]/g, "")
     .replace(/[^a-z0-9]/gi, "")
     .toLowerCase()
+
+const LEAGUE_IMPORT_ALIASES: Record<string, string> = {
+  u: "U22",
+  ligau: "U22",
+  chile: "Liga Chery",
+  ligachile: "Liga Chery",
+}
+
+const sanitizeImportedLeagueHeader = (value: string) =>
+  value
+    .replace(/\s*[:(\[].*$/, "")
+    .replace(/\s+-\s*(?:foto|fotos|imagen|imagenes)\b.*$/i, "")
+    .replace(/\s+(?:foto|fotos|imagen|imagenes)\b.*$/i, "")
+    .replace(/\s+/g, " ")
+    .trim()
+
+const resolveImportedLeagueName = (rawHeader: string, leagues: League[]) => {
+  const cleaned = sanitizeImportedLeagueHeader(rawHeader)
+  if (!cleaned) return ""
+
+  const candidateWithoutLigaPrefix = cleaned.replace(/^liga\s+/i, "").trim()
+  const normalizedLeagueMap = new Map<string, string>()
+
+  for (const league of [...PREDEFINED_LEAGUES, ...leagues]) {
+    const key = normalizeTeamName(league.name)
+    if (!key || normalizedLeagueMap.has(key)) continue
+    normalizedLeagueMap.set(key, league.name)
+  }
+
+  const candidates = [cleaned, candidateWithoutLigaPrefix].filter(Boolean)
+
+  for (const candidate of candidates) {
+    const alias = LEAGUE_IMPORT_ALIASES[normalizeTeamName(candidate)]
+    if (alias) {
+      return alias
+    }
+  }
+
+  for (const candidate of candidates) {
+    const existing = normalizedLeagueMap.get(normalizeTeamName(candidate))
+    if (existing) {
+      return existing
+    }
+  }
+
+  return cleaned
+}
+
+const IMPORT_DATE_PREFIX_RE = /^\s*(?:[A-Za-zÁÉÍÓÚáéíóúñÑ]+\.?\s+)?(?:0?[1-9]|[12]\d|3[01])\/(?:0?[1-9]|1[0-2])(?:\/\d{4})?/
+const IMPORT_INLINE_TIME_FIX_RE =
+  /(\b(?:0?[1-9]|[12]\d|3[01])\/(?:0?[1-9]|1[0-2])(?:\/\d{4})?)(?=\d{1,2}:\d{2}\b)/
+const IMPORT_FIXTURE_RE = new RegExp(
+  String.raw`^\s*(?:[A-Za-zÁÉÍÓÚáéíóúñÑ]+\.?\s+)?(0?[1-9]|[12]\d|3[01])\/(0?[1-9]|1[0-2])(?:\/(\d{4}))?\s+(\d{1,2}:\d{2})(?:\s*\|\s*)?\s*(.+?)(?:\s*(?:-|–|—|vs|VS|Vs)\s*|\s{2,})(.+)$`,
+)
 
 const levenshteinDistance = (a: string, b: string) => {
   if (a === b) {
@@ -144,12 +199,61 @@ interface TimeWithDate {
 // Configuración de zonas horarias
 const timeZonesConfig: TimeZoneConfig[] = [
   { name: "ECU", diffHours: -2, label: "ECU", enabled: true },
-  { name: "BOL", diffHours: -1, label: "BOL", enabled: true },
-  { name: "ARG", diffHours: 0, label: "ARG/URU/CHI", enabled: true },
-  { name: "ESP", diffHours: 4, label: "ESP", enabled: true },
+  { name: "BOL", diffHours: -1, label: "BOL / CHI", enabled: true },
+  { name: "ARG", diffHours: 0, label: "ARG / BRA / URU", enabled: false },
+  { name: "ESP", diffHours: 4, label: "ESP", enabled: false },
 ]
 
 const SESSION_STORAGE_KEY = "fixture-generator-session-v1"
+
+const getDefaultTimeZones = () => timeZonesConfig.map((tz) => ({ ...tz }))
+
+const hasLegacyChileTimeZone = (timeZones?: TimeZoneConfig[]) =>
+  Array.isArray(timeZones) && timeZones.some((tz) => tz.name === "ARG" && (tz.label || "").trim().toUpperCase() === "CHI")
+
+const normalizeExportHorario = (horario?: string, timeZones?: TimeZoneConfig[]) => {
+  if (horario === "ARG" && hasLegacyChileTimeZone(timeZones)) {
+    return "BOL"
+  }
+
+  return horario || "BOL"
+}
+
+const normalizeTimeZones = (timeZones?: TimeZoneConfig[]) => {
+  if (!Array.isArray(timeZones) || timeZones.length === 0) {
+    return getDefaultTimeZones()
+  }
+
+  const hasLegacyChileZone = hasLegacyChileTimeZone(timeZones)
+
+  return timeZones.map((tz) => {
+    if (tz.name === "BOL") {
+      return {
+        ...tz,
+        label: !tz.label || tz.label.trim().toUpperCase() === "BOL" ? "BOL / CHI" : tz.label,
+        enabled: tz.enabled ?? true,
+      }
+    }
+
+    if (tz.name === "ARG" && hasLegacyChileZone) {
+      return {
+        ...tz,
+        label: "ARG / BRA / URU",
+        enabled: false,
+      }
+    }
+
+    if (tz.name === "ECU") {
+      return { ...tz, enabled: tz.enabled ?? true }
+    }
+
+    if (tz.name === "ESP") {
+      return { ...tz, enabled: tz.enabled ?? false }
+    }
+
+    return { ...tz, enabled: tz.enabled ?? true }
+  })
+}
 
 // Función para calcular los horarios en diferentes zonas horarias
 const calculateTimes = (baseTime: string, timeZones: TimeZoneConfig[], baseDate: string = "1") => {
@@ -244,7 +348,7 @@ export default function Home() {
   const [dateVerticalOffset, setDateVerticalOffset] = useState<number>(0)
   const [dateVerticalOffsetInput, setDateVerticalOffsetInput] = useState<number>(0)
   const [blockStyle, setBlockStyle] = useState<"normal" | "compact" | "five-fixtures" | "two-column">("normal")
-  const [exportHorario, setExportHorario] = useState<string>("ARG") // Horario para exportación (usado internamente)
+  const [exportHorario, setExportHorario] = useState<string>("BOL") // Horario para exportación (usado internamente)
   const [exportFormat, setExportFormat] = useState<"PNG" | "SVG">("PNG")
 
   // Ajustes del modo normal
@@ -335,7 +439,7 @@ export default function Home() {
   const [fixtureMarginBottomInput, setFixtureMarginBottomInput] = useState<number>(0)
 
   // Configuración de zonas horarias
-const [timeZones, setTimeZones] = useState<TimeZoneConfig[]>(timeZonesConfig)
+  const [timeZones, setTimeZones] = useState<TimeZoneConfig[]>(getDefaultTimeZones)
 
   // Controles para posición de fechas
   const [dateOriginalOffsetX, setDateOriginalOffsetX] = useState<number>(89) // Desplazamiento horizontal de fecha original (27)
@@ -371,6 +475,9 @@ const [timeZones, setTimeZones] = useState<TimeZoneConfig[]>(timeZonesConfig)
   const sessionFileInputRef = useRef<HTMLInputElement | null>(null)
   const [newTeamName, setNewTeamName] = useState("")
   const [uploadedLogos, setUploadedLogos] = useState<UploadedLogo[]>([])
+  const [autoLogosLoaded, setAutoLogosLoaded] = useState(false)
+  const [localLogosStatus, setLocalLogosStatus] = useState<"idle" | "loading" | "ok" | "error">("idle")
+  const [localLogosError, setLocalLogosError] = useState<string | null>(null)
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
   const [showDeleteLeagueConfirm, setShowDeleteLeagueConfirm] = useState<string | null>(null)
   const [dividerHeight, setDividerHeight] = useState<number>(80)
@@ -429,7 +536,7 @@ const [timeZones, setTimeZones] = useState<TimeZoneConfig[]>(timeZonesConfig)
       }
 
       if (Array.isArray(session.timeZones)) {
-        setTimeZones(session.timeZones)
+        setTimeZones(normalizeTimeZones(session.timeZones))
       }
 
       apply(session.timeBlockOffset, setTimeBlockOffset)
@@ -442,7 +549,9 @@ const [timeZones, setTimeZones] = useState<TimeZoneConfig[]>(timeZonesConfig)
       apply(session.teamNamesFontSizeInput, setTeamNamesFontSizeInput)
       apply(session.teamNamesOffset, setTeamNamesOffset)
       apply(session.teamNamesOffsetInput, setTeamNamesOffsetInput)
-      apply(session.exportHorario, setExportHorario)
+      if (session.exportHorario !== undefined || Array.isArray(session.timeZones)) {
+        setExportHorario(normalizeExportHorario(session.exportHorario, session.timeZones))
+      }
       apply(session.horizontalTimeOffset, setHorizontalTimeOffset)
       apply(session.horizontalTimeOffsetInput, setHorizontalTimeOffsetInput)
       apply(session.dateVerticalOffset, setDateVerticalOffset)
@@ -673,6 +782,95 @@ const [timeZones, setTimeZones] = useState<TimeZoneConfig[]>(timeZonesConfig)
   )
 
   const effectiveFixtureDateFontSize = useMemo(() => fixtureDateFontSize, [fixtureDateFontSize])
+
+  const isPlaceholderLogo = (logo?: string) => !logo || logo.includes("placeholder")
+
+  const loadLocalLogos = useCallback(
+    async ({ seedIfEmpty = false, addMissing = false }: { seedIfEmpty?: boolean; addMissing?: boolean } = {}) => {
+      setLocalLogosStatus("loading")
+      setLocalLogosError(null)
+
+      try {
+        const response = await fetch("/api/local-logos", { cache: "no-store" })
+        if (!response.ok) {
+          const message = await response.text()
+          throw new Error(message || "No se pudo leer la carpeta de logos locales.")
+        }
+        const data = await response.json()
+        const logos = Array.isArray(data?.logos) ? data.logos : []
+        if (logos.length === 0) {
+          setLocalLogosStatus("ok")
+          return
+        }
+
+        const logoMap = new Map<string, { url: string; displayName: string }>()
+        for (const logo of logos) {
+          const key = normalizeTeamName(logo.baseName || "")
+          if (!key) continue
+          const displayName = (logo.baseName || "").replace(/[_-]+/g, " ").trim()
+          const fileQuery = logo.relativePath ? `path=${encodeURIComponent(logo.relativePath)}` : `name=${encodeURIComponent(logo.fileName)}`
+          logoMap.set(key, {
+            url: `/api/local-logos/file?${fileQuery}`,
+            displayName: displayName || logo.baseName,
+          })
+        }
+
+        if (logoMap.size === 0) {
+          setLocalLogosStatus("ok")
+          return
+        }
+
+        setTeams((prev) => {
+          const existingKeys = new Set(prev.map((team) => normalizeTeamName(team.name)))
+          const next = prev.map((team) => {
+            const key = normalizeTeamName(team.name)
+            const match = logoMap.get(key)
+            if (!match || !isPlaceholderLogo(team.logo)) return team
+            return { ...team, logo: match.url }
+          })
+
+          const shouldSeed = seedIfEmpty && prev.length === 0
+          if (!shouldSeed && !addMissing) {
+            return next
+          }
+
+          const additions: Team[] = []
+          for (const [key, value] of logoMap.entries()) {
+            if (existingKeys.has(key)) continue
+            additions.push({
+              id: `local-${key}`,
+              name: value.displayName,
+              logo: value.url,
+            })
+          }
+
+          return additions.length ? [...next, ...additions] : next
+        })
+
+        setFixtures((prev) =>
+          prev.map((fixture) => {
+            const updateTeam = (team: Team) => {
+              const key = normalizeTeamName(team.name)
+              const match = logoMap.get(key)
+              if (!match || !isPlaceholderLogo(team.logo)) return team
+              return { ...team, logo: match.url }
+            }
+            return {
+              ...fixture,
+              homeTeam: updateTeam(fixture.homeTeam),
+              awayTeam: updateTeam(fixture.awayTeam),
+            }
+          }),
+        )
+
+        setLocalLogosStatus("ok")
+      } catch (error: any) {
+        setLocalLogosStatus("error")
+        setLocalLogosError(error?.message || "No se pudieron cargar los logos locales.")
+      }
+    },
+    [setFixtures, setTeams],
+  )
 
   // Aplicar defaults al entrar al modo compacto (solo al entrar)
   const previousBlockStyleRef = useRef<typeof blockStyle>(blockStyle)
@@ -961,6 +1159,24 @@ const [timeZones, setTimeZones] = useState<TimeZoneConfig[]>(timeZonesConfig)
       return [...prev, ...missing]
     })
   }, [isSessionHydrated])
+
+  useEffect(() => {
+    if (!isSessionHydrated || autoLogosLoaded) return
+    let cancelled = false
+
+    const run = async () => {
+      await loadLocalLogos({ seedIfEmpty: true })
+      if (!cancelled) {
+        setAutoLogosLoaded(true)
+      }
+    }
+
+    run()
+
+    return () => {
+      cancelled = true
+    }
+  }, [autoLogosLoaded, isSessionHydrated, loadLocalLogos])
 
   useEffect(() => {
     if (!isSessionHydrated || typeof window === "undefined") {
@@ -1357,7 +1573,7 @@ const [timeZones, setTimeZones] = useState<TimeZoneConfig[]>(timeZonesConfig)
   // Función para obtener los timeZones a mostrar según la selección
   const getVisibleTimeZones = () => {
     return timeZones
-      .filter((tz) => tz.enabled)
+      .filter((tz) => tz.enabled !== false)
       .sort((a, b) => (a.diffHours - b.diffHours) || a.name.localeCompare(b.name))
   }
 
@@ -1396,8 +1612,8 @@ const [timeZones, setTimeZones] = useState<TimeZoneConfig[]>(timeZonesConfig)
         setCompactInterDateGap(-21)
         setCompactDateBlockGap(0)
 
-        setFixtureDateFontSize(125)
-        setFixtureDateFontSizeInput(125)
+        setFixtureDateFontSize(133)
+        setFixtureDateFontSizeInput(133)
         setDateVerticalOffset(3)
         setDateVerticalOffsetInput(3)
         setFixtureSpacingBetweenDates(-8)
@@ -1438,18 +1654,18 @@ const [timeZones, setTimeZones] = useState<TimeZoneConfig[]>(timeZonesConfig)
         }
 
         // NOM
-        setTimeBlockOffset(-70)
-        setTimeBlockOffsetInput(-70)
-        ctxSetCompactTimeBlockOffset(-70)
-        ctxSetCompactTimeBlockOffsetInput(-70)
+        setTimeBlockOffset(-65)
+        setTimeBlockOffsetInput(-65)
+        ctxSetCompactTimeBlockOffset(-65)
+        ctxSetCompactTimeBlockOffsetInput(-65)
 
         setCountryLabelOffset(-35)
         setCountryLabelOffsetInput(-35)
 
-        setTeamNamesOffset(-45)
-        setTeamNamesOffsetInput(-45)
-        ctxSetCompactTeamNamesOffset(-45)
-        ctxSetCompactTeamNamesOffsetInput(-45)
+        setTeamNamesOffset(-38)
+        setTeamNamesOffsetInput(-38)
+        ctxSetCompactTeamNamesOffset(-38)
+        ctxSetCompactTeamNamesOffsetInput(-38)
         return
       }
 
@@ -1463,8 +1679,8 @@ const [timeZones, setTimeZones] = useState<TimeZoneConfig[]>(timeZonesConfig)
         setFiveDateBlockGap(0)
         setFiveFixtureSpacingBetweenDates(-8)
 
-        setFixtureDateFontSize(125)
-        setFixtureDateFontSizeInput(125)
+        setFixtureDateFontSize(178)
+        setFixtureDateFontSizeInput(178)
         setDateVerticalOffset(3)
         setDateVerticalOffsetInput(3)
         setFixtureSpacingBetweenDates(-8)
@@ -1489,10 +1705,10 @@ const [timeZones, setTimeZones] = useState<TimeZoneConfig[]>(timeZonesConfig)
         // HOR
         if (!nextShowTeamNames) {
           setShowTimeLabels(true)
-          setTimeBlockOffset(-45)
-          setTimeBlockOffsetInput(-45)
-          setCountryLabelOffset(-45)
-          setCountryLabelOffsetInput(-45)
+          setTimeBlockOffset(-40)
+          setTimeBlockOffsetInput(-40)
+          setCountryLabelOffset(-40)
+          setCountryLabelOffsetInput(-40)
           setTeamNamesOffset(-43)
           setTeamNamesOffsetInput(-43)
           return
@@ -2302,23 +2518,28 @@ const [timeZones, setTimeZones] = useState<TimeZoneConfig[]>(timeZonesConfig)
     let currentLeague = ""
 
     lines.forEach((rawLine) => {
-      const line = rawLine.trim()
+      const line = rawLine.trim().replace(IMPORT_INLINE_TIME_FIX_RE, "$1 ")
       if (!line) return
 
       // Si la línea comienza con (opcional) día y fecha (DD/MM o DD/MM/YYYY), intentamos parsear un fixture
-      const startsWithDate = /^\s*(?:[A-Za-zÁÉÍÓÚáéíóúñÑ]+\.?\s+)?\d{1,2}\/\d{1,2}(?:\/\d{4})?/.test(line)
+      const startsWithDate = IMPORT_DATE_PREFIX_RE.test(line)
 
       if (!startsWithDate) {
-        // Podría ser encabezado de liga. Aceptamos opcional ':' final y rechazamos líneas con dígitos (p.ej. 'DESDE EL 31 ...')
-        const candidate = line.replace(/:$/, '').trim()
+        // Podría ser encabezado de liga. Limpiamos ruido editorial y rechazamos líneas con dígitos
+        // (p.ej. 'DESDE EL 31 ...').
+        const candidate = sanitizeImportedLeagueHeader(line)
+        if (!candidate) {
+          return
+        }
         if (/\d/.test(candidate)) {
           // Ignorar líneas informativas con números que no son fixtures
           return
         }
 
-        // Normalizar contra ligas existentes (ignorar mayúsculas/minúsculas)
-        const existing = leagues.find((l) => l.name.toLowerCase() === candidate.toLowerCase())?.name
-        const leagueName = existing ?? candidate
+        const leagueName = resolveImportedLeagueName(candidate, leagues)
+        if (!leagueName) {
+          return
+        }
 
         findOrCreateLeague(leagueName)
         const normalized = leagues.find((l) => l.name.toLowerCase() === leagueName.toLowerCase())?.name
@@ -2333,10 +2554,8 @@ const [timeZones, setTimeZones] = useState<TimeZoneConfig[]>(timeZonesConfig)
       // Patrones soportados:
       // [DayName ]DD/MM[/(YYYY)] HH:MM [| ] HOME <sep> AWAY
       // Separadores soportados: '-', '–', '—', 'VS' (cualquier mayúsc/minúsc)
-      const re = new RegExp(
-        String.raw`^\s*(?:[A-Za-zÁÉÍÓÚáéíóúñÑ]+\.?\s+)?(\d{1,2})\/(\d{1,2})(?:\/(\d{4}))?\s+(\d{1,2}:\d{2})\s*(?:\|\s*)?\s*(.+?)\s*(?:-|–|—|vs|VS|Vs)\s*(.+)$`
-      )
-      const match = line.match(re)
+      // o dos o más espacios entre equipos.
+      const match = line.match(IMPORT_FIXTURE_RE)
 
       if (match && currentLeague) {
         const [, day, month, _year, time, homeTeamNameRaw, awayTeamNameRaw] = match
@@ -2486,7 +2705,7 @@ const [timeZones, setTimeZones] = useState<TimeZoneConfig[]>(timeZonesConfig)
           controlBars.forEach((bar) => ((bar as HTMLElement).style.display = ""))
 
           // Descargar la imagen
-          const currentHorario = exportHorario || "ARG"
+          const currentHorario = exportHorario || "BOL"
           let horarioLabel = ""
           switch (currentHorario) {
             case "ARG":
@@ -2509,7 +2728,7 @@ const [timeZones, setTimeZones] = useState<TimeZoneConfig[]>(timeZonesConfig)
         } else {
           // Exportar todo en un ZIP
           const zip = new JSZip()
-          const currentHorario = exportHorario || "ARG"
+          const currentHorario = exportHorario || "BOL"
           let horarioLabel = ""
           switch (currentHorario) {
             case "ARG":
@@ -2621,6 +2840,85 @@ const [timeZones, setTimeZones] = useState<TimeZoneConfig[]>(timeZonesConfig)
         }
       }
 
+      const absolutizeImageSrcAttributes = (root: ParentNode) => {
+        const images = Array.from(root.querySelectorAll("img")) as HTMLImageElement[]
+        const previousSrcByImage = new Map<HTMLImageElement, string | null>()
+
+        for (const image of images) {
+          const previousSrc = image.getAttribute("src")
+          previousSrcByImage.set(image, previousSrc)
+
+          if (!previousSrc) {
+            continue
+          }
+
+          // `img.src` devuelve la URL resuelta absoluta.
+          const absoluteSrc = image.currentSrc || image.src
+          if (absoluteSrc && absoluteSrc !== previousSrc) {
+            image.setAttribute("src", absoluteSrc)
+          }
+        }
+
+        return () => {
+          for (const image of images) {
+            const previousSrc = previousSrcByImage.get(image)
+            if (typeof previousSrc === "string") {
+              image.setAttribute("src", previousSrc)
+            } else {
+              image.removeAttribute("src")
+            }
+          }
+        }
+      }
+
+      const blobToDataUrl = (blob: Blob): Promise<string> =>
+        new Promise((resolve, reject) => {
+          const reader = new FileReader()
+          reader.onload = () => {
+            if (typeof reader.result === "string") {
+              resolve(reader.result)
+            } else {
+              reject(new Error("No se pudo convertir el blob a data URL"))
+            }
+          }
+          reader.onerror = () => reject(reader.error || new Error("Error leyendo blob"))
+          reader.readAsDataURL(blob)
+        })
+
+      const inlineSvgImageHrefs = async (svgRoot: SVGElement) => {
+        const XLINK_NS = "http://www.w3.org/1999/xlink"
+        const images = Array.from(svgRoot.querySelectorAll("image")) as SVGImageElement[]
+
+        await Promise.allSettled(
+          images.map(async (image) => {
+            const href =
+              image.getAttributeNS(XLINK_NS, "href") ||
+              image.getAttribute("href") ||
+              image.getAttribute("xlink:href")
+
+            if (!href || href.startsWith("data:")) {
+              return
+            }
+
+            try {
+              const response = await fetch(href, { cache: "force-cache" })
+              if (!response.ok) {
+                return
+              }
+              const blob = await response.blob()
+              const dataUrl = await blobToDataUrl(blob)
+              // Evitar duplicados de href/xlink:href que invalidan el SVG para Illustrator.
+              image.removeAttribute("href")
+              image.removeAttribute("xlink:href")
+              image.removeAttributeNS(XLINK_NS, "href")
+              image.setAttributeNS(XLINK_NS, "href", dataUrl)
+            } catch {
+              // Si no se puede descargar (por CORS/red), mantenemos el href original.
+            }
+          }),
+        )
+      }
+
       // Dar tiempo para que el DOM se actualice
       setTimeout(async () => {
         try {
@@ -2667,21 +2965,28 @@ const [timeZones, setTimeZones] = useState<TimeZoneConfig[]>(timeZonesConfig)
               }),
             )
 
-            // Serializar DOM a SVG editable
-            const rect = (container as HTMLElement).getBoundingClientRect()
-            const svgDoc = elementToSVG(container as HTMLElement)
-            const svgEl = svgDoc.documentElement
-            await inlineResources(svgEl)
-            normalizeSvgTextNodes(svgDoc)
-            svgEl.setAttribute("width", `${Math.ceil(rect.width)}`)
-            svgEl.setAttribute("height", `${Math.ceil(rect.height)}`)
-            svgEl.setAttribute("viewBox", `0 0 ${Math.ceil(rect.width)} ${Math.ceil(rect.height)}`)
-            const svgContent = new XMLSerializer().serializeToString(svgDoc)
+            let svgContent = ""
+            const restoreImageSrcAttributes = absolutizeImageSrcAttributes(container as HTMLElement)
+            try {
+              // Serializar DOM a SVG editable
+              const rect = (container as HTMLElement).getBoundingClientRect()
+              const svgDoc = elementToSVG(container as HTMLElement)
+              const svgEl = svgDoc.documentElement
+              await inlineResources(svgEl)
+              await inlineSvgImageHrefs(svgEl)
+              normalizeSvgTextNodes(svgDoc)
+              svgEl.setAttribute("width", `${Math.ceil(rect.width)}`)
+              svgEl.setAttribute("height", `${Math.ceil(rect.height)}`)
+              svgEl.setAttribute("viewBox", `0 0 ${Math.ceil(rect.width)} ${Math.ceil(rect.height)}`)
+              svgContent = new XMLSerializer().serializeToString(svgDoc)
+            } finally {
+              restoreImageSrcAttributes()
 
-            // Restaurar visibilidad
-            controlButtons.forEach((btn) => ((btn as HTMLElement).style.display = ""))
-            if (leagueTitle) (leagueTitle as HTMLElement).style.display = ""
-            controlBars.forEach((bar) => ((bar as HTMLElement).style.display = ""))
+              // Restaurar visibilidad
+              controlButtons.forEach((btn) => ((btn as HTMLElement).style.display = ""))
+              if (leagueTitle) (leagueTitle as HTMLElement).style.display = ""
+              controlBars.forEach((bar) => ((bar as HTMLElement).style.display = ""))
+            }
 
             // Descargar SVG
             const blob = new Blob([svgContent], { type: "image/svg+xml" })
@@ -2721,21 +3026,28 @@ const [timeZones, setTimeZones] = useState<TimeZoneConfig[]>(timeZonesConfig)
               }),
             )
 
-            // Serializar DOM a SVG editable
-            const rectAll = (fixturesContainer as HTMLElement).getBoundingClientRect()
-            const svgDocAll = elementToSVG(fixturesContainer as HTMLElement)
-            const svgElAll = svgDocAll.documentElement
-            await inlineResources(svgElAll)
-            normalizeSvgTextNodes(svgDocAll)
-            svgElAll.setAttribute("width", `${Math.ceil(rectAll.width)}`)
-            svgElAll.setAttribute("height", `${Math.ceil(rectAll.height)}`)
-            svgElAll.setAttribute("viewBox", `0 0 ${Math.ceil(rectAll.width)} ${Math.ceil(rectAll.height)}`)
-            const svgContent = new XMLSerializer().serializeToString(svgDocAll)
+            let svgContent = ""
+            const restoreImageSrcAttributes = absolutizeImageSrcAttributes(fixturesContainer)
+            try {
+              // Serializar DOM a SVG editable
+              const rectAll = (fixturesContainer as HTMLElement).getBoundingClientRect()
+              const svgDocAll = elementToSVG(fixturesContainer as HTMLElement)
+              const svgElAll = svgDocAll.documentElement
+              await inlineResources(svgElAll)
+              await inlineSvgImageHrefs(svgElAll)
+              normalizeSvgTextNodes(svgDocAll)
+              svgElAll.setAttribute("width", `${Math.ceil(rectAll.width)}`)
+              svgElAll.setAttribute("height", `${Math.ceil(rectAll.height)}`)
+              svgElAll.setAttribute("viewBox", `0 0 ${Math.ceil(rectAll.width)} ${Math.ceil(rectAll.height)}`)
+              svgContent = new XMLSerializer().serializeToString(svgDocAll)
+            } finally {
+              restoreImageSrcAttributes()
 
-            // Restaurar visibilidad
-            controlButtons.forEach((btn) => ((btn as HTMLElement).style.display = ""))
-            leagueTitles.forEach((title) => ((title as HTMLElement).style.display = ""))
-            controlBars.forEach((bar) => ((bar as HTMLElement).style.display = ""))
+              // Restaurar visibilidad
+              controlButtons.forEach((btn) => ((btn as HTMLElement).style.display = ""))
+              leagueTitles.forEach((title) => ((title as HTMLElement).style.display = ""))
+              controlBars.forEach((bar) => ((bar as HTMLElement).style.display = ""))
+            }
 
             // Descargar SVG
             const blob = new Blob([svgContent], { type: "image/svg+xml" })
@@ -2790,7 +3102,8 @@ const [timeZones, setTimeZones] = useState<TimeZoneConfig[]>(timeZonesConfig)
           setFixtures(jsonData.fixtures)
           setTeams(jsonData.teams)
           setLeagues(jsonData.leagues)
-          setTimeZones(jsonData.timeZones)
+          setTimeZones(normalizeTimeZones(jsonData.timeZones))
+          setExportHorario(normalizeExportHorario(jsonData.exportHorario, jsonData.timeZones))
           setExportSpacing(jsonData.exportSpacing)
           setExportSpacingInput(jsonData.exportSpacing)
           setExportDateSpacing(jsonData.exportDateSpacing)
@@ -2884,11 +3197,7 @@ const [timeZones, setTimeZones] = useState<TimeZoneConfig[]>(timeZonesConfig)
       setFixtures([])
       setTeams([])
       setLeagues([])
-      setTimeZones([
-        { name: "ECU", diffHours: -2, label: "ECU" },
-        { name: "ARG", diffHours: 0, label: "BRA / URU" },
-        { name: "BOL", diffHours: -1, label: "BOL / CHI" },
-      ])
+      setTimeZones(getDefaultTimeZones())
       setExportSpacing(20)
       setExportSpacingInput(20)
       setExportDateSpacing(2)
@@ -2949,12 +3258,16 @@ const [timeZones, setTimeZones] = useState<TimeZoneConfig[]>(timeZonesConfig)
 	                <Trophy className="mr-2 h-4 w-4" />
 	                Ligas
 	              </TabsTrigger>
-	              <TabsTrigger value="settings">
-	                <Settings className="mr-2 h-4 w-4" />
-	                Configuración
-	              </TabsTrigger>
-	            </TabsList>
-	          </div>
+		              <TabsTrigger value="settings">
+		                <Settings className="mr-2 h-4 w-4" />
+		                Configuración
+		              </TabsTrigger>
+		              <TabsTrigger value="grafico">
+		                <LayoutTemplate className="mr-2 h-4 w-4" />
+		                Fixture Gráfico
+		              </TabsTrigger>
+		            </TabsList>
+		          </div>
 
 	          <TabsContent value="importar">
 	            <div className="grid gap-6">
@@ -2976,7 +3289,7 @@ const [timeZones, setTimeZones] = useState<TimeZoneConfig[]>(timeZonesConfig)
                       <code className="text-xs text-blue-800 block font-mono">
                         Nombre de Liga<br />
                         DD/MM HH:MM EquipoLocal-EquipoVisitante<br />
-                        DD/MM HH:MM EquipoLocal-EquipoVisitante
+                        DD/MM HH:MM EquipoLocal  EquipoVisitante
                       </code>
                     </div>
 
@@ -2989,6 +3302,9 @@ const [timeZones, setTimeZones] = useState<TimeZoneConfig[]>(timeZonesConfig)
                         placeholder="Euroliga
 23/5 12:00 Fenerbahce-Panathinaikos
 23/5 15:00 Olympiacos-Monaco
+
+Italia
+15/03 16:00 Virtus Olidata Bologna  EA7 Emporio Armani Milano
 
 Endesa
 25/5 8:00 Tenerife-Valencia
@@ -3311,11 +3627,6 @@ Endesa
 		              </CardHeader>
 	              <CardContent>
 	                <div className="space-y-4">
-	                  <div className="flex justify-between items-center">
-	                    <Button onClick={addFixture}>Agregar Fixture</Button>
-	                  </div>
-
-
                   {fixtures.length > 0 ? (
                     <>
                       
@@ -3934,23 +4245,13 @@ Endesa
                                             }}
                                           >
                                             {/* Contenido de la franja */}
-                                            {getVisibleTimeZones().map((tz, i) => (
-                                              <React.Fragment key={`${fixture.id}-${tz.name}`}>
-                                                <div
-                                                  className="flex-1 flex flex-col items-center justify-center h-full"
-                                                  style={{ transform: `translateX(${horizontalTimeOffset}px)` }}
-                                                >
-                                                  {!exportMinimalMode && showTeamNames ? (
-                                                    // Show team names instead of time zones
+                                            {showTeamNames ? (
+                                              <>
+                                                <div className="flex-1 flex items-center justify-center h-full px-3">
+                                                  {!exportMinimalMode && (
                                                     <div
-                                                      className="text-center mb-1"
-                                                      data-role={
-                                                        i === 0
-                                                          ? "team-name-home"
-                                                          : i === getVisibleTimeZones().length - 1
-                                                            ? "team-name-away"
-                                                            : "team-name"
-                                                      }
+                                                      className="text-center"
+                                                      data-role="team-name-home"
                                                       style={{
                                                         position: "relative",
                                                         top: `${teamNamesOffset}px`,
@@ -3958,11 +4259,6 @@ Endesa
                                                         fontFamily: "Poppins, sans-serif",
                                                         lineHeight: "1.2",
                                                         maxWidth: "100%",
-                                                        padding: "0 5px",
-                                                        display: "flex",
-                                                        alignItems: "center",
-                                                        justifyContent: "center",
-                                                        minHeight: "2.4em",
                                                         color: fixture.textColor || "white",
                                                         whiteSpace: "normal",
                                                         wordBreak: "normal",
@@ -3971,15 +4267,85 @@ Endesa
                                                         hyphens: "none",
                                                       }}
                                                     >
-                                                      {i === 0
-                                                        ? fixture.homeTeam.name
-                                                        : i === getVisibleTimeZones().length - 1
-                                                          ? fixture.awayTeam.name
-                                                          : ""}
+                                                      {fixture.homeTeam.name}
                                                     </div>
-                                                  ) : (
-                                                    // Show time zone labels
-                                                    !exportMinimalMode && showTimeLabels && (
+                                                  )}
+                                                </div>
+                                                {showDividers && !exportMinimalMode && (
+                                                  <div
+                                                    className="w-px bg-white"
+                                                    data-role="divider"
+                                                    style={{
+                                                      height: `${blockStyle === "compact" ? compactDividerHeight : dividerHeight}%`,
+                                                      backgroundColor: fixture.textColor || "white",
+                                                    }}
+                                                  ></div>
+                                                )}
+                                                <div
+                                                  className="flex-1 flex items-center justify-center h-full px-3"
+                                                  style={{ transform: `translateX(${horizontalTimeOffset}px)` }}
+                                                >
+                                                  {!exportMinimalMode && (
+                                                    <div
+                                                      className="text-center font-bold"
+                                                      data-role="time-value"
+                                                      data-timezone={exportHorario}
+                                                      style={{
+                                                        marginTop: `${timeBlockOffset}px`,
+                                                        position: "relative",
+                                                        top: "-5px",
+                                                        fontSize: `${blockStyle === "compact" ? Math.max(10, timesFontSize + compactTimesFontDelta) : timesFontSize}px`,
+                                                        color: fixture.textColor || "white",
+                                                        fontFamily: "Poppins, sans-serif",
+                                                      }}
+                                                    >
+                                                      {fixture.times[exportHorario as keyof typeof fixture.times] || fixture.time}
+                                                    </div>
+                                                  )}
+                                                </div>
+                                                {showDividers && !exportMinimalMode && (
+                                                  <div
+                                                    className="w-px bg-white"
+                                                    data-role="divider"
+                                                    style={{
+                                                      height: `${blockStyle === "compact" ? compactDividerHeight : dividerHeight}%`,
+                                                      backgroundColor: fixture.textColor || "white",
+                                                    }}
+                                                  ></div>
+                                                )}
+                                                <div className="flex-1 flex items-center justify-center h-full px-3">
+                                                  {!exportMinimalMode && (
+                                                    <div
+                                                      className="text-center"
+                                                      data-role="team-name-away"
+                                                      style={{
+                                                        position: "relative",
+                                                        top: `${teamNamesOffset}px`,
+                                                        fontSize: `${blockStyle === "compact" ? Math.max(8, teamNamesFontSize + compactTeamNamesFontDelta) : teamNamesFontSize}px`,
+                                                        fontFamily: "Poppins, sans-serif",
+                                                        lineHeight: "1.2",
+                                                        maxWidth: "100%",
+                                                        color: fixture.textColor || "white",
+                                                        whiteSpace: "normal",
+                                                        wordBreak: "normal",
+                                                        overflowWrap: "break-word",
+                                                        textWrap: "balance",
+                                                        hyphens: "none",
+                                                      }}
+                                                    >
+                                                      {fixture.awayTeam.name}
+                                                    </div>
+                                                  )}
+                                                </div>
+                                              </>
+                                            ) : (
+                                              getVisibleTimeZones().map((tz, i) => (
+                                                <React.Fragment key={`${fixture.id}-${tz.name}`}>
+                                                  <div
+                                                    className="flex-1 flex flex-col items-center justify-center h-full"
+                                                    style={{ transform: `translateX(${horizontalTimeOffset}px)` }}
+                                                  >
+                                                    {!exportMinimalMode && showTimeLabels && (
                                                       <div
                                                         className="text-center mb-1"
                                                         data-role="time-label"
@@ -3994,42 +4360,38 @@ Endesa
                                                       >
                                                         {tz.label}
                                                       </div>
-                                                    )
-                                                  )}
-                                                  {!exportMinimalMode && (
+                                                    )}
+                                                    {!exportMinimalMode && (
+                                                      <div
+                                                        className="text-center font-bold"
+                                                        data-role="time-value"
+                                                        data-timezone={tz.name}
+                                                        style={{
+                                                          marginTop: `${timeBlockOffset}px`,
+                                                          position: "relative",
+                                                          top: "-5px",
+                                                          fontSize: `${blockStyle === "compact" ? Math.max(10, timesFontSize + compactTimesFontDelta) : timesFontSize}px`,
+                                                          color: fixture.textColor || "white",
+                                                          fontFamily: "Poppins, sans-serif",
+                                                        }}
+                                                      >
+                                                        {fixture.times[tz.name as keyof typeof fixture.times]}
+                                                      </div>
+                                                    )}
+                                                  </div>
+                                                  {i < getVisibleTimeZones().length - 1 && showDividers && !exportMinimalMode && (
                                                     <div
-                                                      className="text-center font-bold"
-                                                      data-role="time-value"
-                                                      data-timezone={tz.name}
+                                                      className="w-px bg-white"
+                                                      data-role="divider"
                                                       style={{
-                                                        marginTop: `${timeBlockOffset}px`,
-                                                        position: "relative",
-                                                        top: "-5px",
-                                                        fontSize: `${blockStyle === "compact" ? Math.max(10, timesFontSize + compactTimesFontDelta) : timesFontSize}px`,
-                                                        color: fixture.textColor || "white",
-                                                        fontFamily: "Poppins, sans-serif",
+                                                        height: `${blockStyle === "compact" ? compactDividerHeight : dividerHeight}%`,
+                                                        backgroundColor: fixture.textColor || "white",
                                                       }}
-                                                    >
-                                                      {showTeamNames && i === 1
-                                                        ? fixture.times[exportHorario as keyof typeof fixture.times]
-                                                        : !showTeamNames
-                                                          ? fixture.times[tz.name as keyof typeof fixture.times]
-                                                          : ""}
-                                                    </div>
+                                                    ></div>
                                                   )}
-                                                </div>
-                                                {i < getVisibleTimeZones().length - 1 && showDividers && !exportMinimalMode && (
-                                                  <div
-                                                    className="w-px bg-white"
-                                                    data-role="divider"
-                                                    style={{
-                                                      height: `${blockStyle === "compact" ? compactDividerHeight : dividerHeight}%`,
-                                                      backgroundColor: fixture.textColor || "white",
-                                                    }}
-                                                  ></div>
-                                                )}
-                                              </React.Fragment>
-                                            ))}
+                                                </React.Fragment>
+                                              ))
+                                            )}
                                           </div>
 
                                           {/* Logo equipo visitante */}
@@ -4051,6 +4413,7 @@ Endesa
                                                 maxWidth: "90%",
                                                 maxHeight: "90%",
                                               }}
+                                              crossOrigin="anonymous"
                                             />
                                             {!exportMode && (
                                               <input
@@ -4310,14 +4673,29 @@ Endesa
               </CardHeader>
               <CardContent>
                 <div className="space-y-4">
-                  <div className="flex justify-between items-center">
-                    <Button onClick={addTeam} disabled={editingTeam !== null}>
-                      {editingTeam ? "Actualizar Equipo" : "Agregar Equipo"}
-                    </Button>
+                  <div className="flex flex-wrap justify-between items-center gap-2">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Button onClick={addTeam} disabled={editingTeam !== null}>
+                        {editingTeam ? "Actualizar Equipo" : "Agregar Equipo"}
+                      </Button>
+                      <Button
+                        variant="outline"
+                        onClick={() => loadLocalLogos({ addMissing: true })}
+                        disabled={localLogosStatus === "loading"}
+                      >
+                        {localLogosStatus === "loading" ? "Cargando logos..." : "Cargar logos locales"}
+                      </Button>
+                    </div>
                     <Button variant="destructive" onClick={deleteAllTeams}>
                       Eliminar todos
                     </Button>
                   </div>
+
+                  {localLogosStatus === "error" && (
+                    <div className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+                      {localLogosError || "No se pudieron cargar los logos locales."}
+                    </div>
+                  )}
 
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div>
@@ -6448,10 +6826,14 @@ Endesa
                 </div>
               </div>
               </CardContent>
-            </Card>
+	            </Card>
 
-          </TabsContent>
-        </Tabs>
+	          </TabsContent>
+
+	          <TabsContent value="grafico">
+	            <GraphicFixtureTab fixturesOverride={fixtures} timeZonesOverride={timeZones} leaguesOverride={leagues} />
+	          </TabsContent>
+	        </Tabs>
       </div>
     </main>
   )

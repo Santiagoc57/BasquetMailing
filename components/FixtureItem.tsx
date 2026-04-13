@@ -39,6 +39,9 @@ const FixtureItem: React.FC<FixtureItemProps> = ({ fixture, showDate }) => {
 
   const homeLogoInputRef = useRef<HTMLInputElement | null>(null)
   const awayLogoInputRef = useRef<HTMLInputElement | null>(null)
+  const visibleTimeZones = timeZones.filter((tz) => tz.enabled !== false)
+  const bandTextColor = fixture.textColor || "white"
+  const selectedExportTime = fixture.times[exportHorario as keyof typeof fixture.times] || fixture.time
 
   const handleLogoUpload = useCallback(
     (event: React.ChangeEvent<HTMLInputElement>, teamKey: "homeTeam" | "awayTeam") => {
@@ -166,80 +169,126 @@ const FixtureItem: React.FC<FixtureItemProps> = ({ fixture, showDate }) => {
           }}
         >
           {/* Contenido de la franja */}
-          {timeZones.map((tz, i) => (
-            <React.Fragment key={`${fixture.id}-${tz.name}`}>
-              <div className="flex-1 flex flex-col items-center justify-center h-full">
-                {showTeamNames ? (
-                  // Show team names instead of time zones
-                  <div
-                    className="text-center mb-1"
-                    style={{
-                      position: "relative",
-                      top: `${(blockStyle === "compact" ? compactTeamNamesOffset : teamNamesOffset)}px`,
-                      fontSize: `${teamNamesFontSize}px`,
-                      fontFamily: "Poppins, sans-serif",
-                      lineHeight: "1.2",
-                      maxWidth: "100%",
-                      padding: "0 5px",
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      minHeight: "2.4em",
-                      color: fixture.textColor || "white",
-                    }}
-                  >
-                    {i === 0
-                      ? fixture.homeTeam.name
-                      : i === timeZones.length - 1
-                        ? fixture.awayTeam.name
-                        : ""}
-                  </div>
-                ) : (
-                  // Show time zone labels
-                  showTimeLabels && (
-                    <div
-                      className="text-center mb-1 text-sm"
-                      style={{
-                        position: "relative",
-                        top: `${countryLabelOffset}px`,
-                        color: fixture.textColor || "white",
-                        fontFamily: "Poppins, sans-serif",
-                      }}
-                    >
-                      {tz.label}
-                    </div>
-                  )
-                )}
+          {showTeamNames ? (
+            <>
+              <div className="flex-1 flex items-center justify-center h-full px-3">
+                <div
+                  className="text-center"
+                  style={{
+                    position: "relative",
+                    top: `${(blockStyle === "compact" ? compactTeamNamesOffset : teamNamesOffset)}px`,
+                    fontSize: `${teamNamesFontSize}px`,
+                    fontFamily: "Poppins, sans-serif",
+                    lineHeight: "1.15",
+                    maxWidth: "100%",
+                    color: bandTextColor,
+                    whiteSpace: "normal",
+                    overflowWrap: "break-word",
+                    textWrap: "balance",
+                  }}
+                >
+                  {fixture.homeTeam.name}
+                </div>
+              </div>
+              {showDividers && (
+                <div
+                  className="w-px bg-white"
+                  style={{
+                    height: `${dividerHeight}%`,
+                    backgroundColor: bandTextColor,
+                  }}
+                ></div>
+              )}
+              <div className="flex-1 flex items-center justify-center h-full px-3">
                 <div
                   className="text-center font-bold"
                   style={{
                     marginTop: `${(blockStyle === "compact" ? compactTimeBlockOffset : timeBlockOffset)}px`,
                     position: "relative",
                     top: "-5px",
-                    left: `${horizontalTimeOffset}px`, // Aplicar offset horizontal aquí
+                    left: `${horizontalTimeOffset}px`,
                     fontSize: `${blockStyle === "compact" ? Math.max(10, timesFontSize - 6) : timesFontSize}px`,
-                    color: fixture.textColor || "white",
+                    color: bandTextColor,
                     fontFamily: "Poppins, sans-serif",
+                    lineHeight: 1,
                   }}
                 >
-                  {showTeamNames && i === 1
-                    ? fixture.times[exportHorario as keyof typeof fixture.times]
-                    : !showTeamNames
-                      ? fixture.times[tz.name as keyof typeof fixture.times]
-                      : ""}
+                  {selectedExportTime}
                 </div>
               </div>
-              {i < timeZones.length - 1 && showDividers && (
+              {showDividers && (
                 <div
                   className="w-px bg-white"
                   style={{
                     height: `${dividerHeight}%`,
-                    backgroundColor: fixture.textColor || "white",
+                    backgroundColor: bandTextColor,
                   }}
                 ></div>
               )}
-            </React.Fragment>
-          ))}
+              <div className="flex-1 flex items-center justify-center h-full px-3">
+                <div
+                  className="text-center"
+                  style={{
+                    position: "relative",
+                    top: `${(blockStyle === "compact" ? compactTeamNamesOffset : teamNamesOffset)}px`,
+                    fontSize: `${teamNamesFontSize}px`,
+                    fontFamily: "Poppins, sans-serif",
+                    lineHeight: "1.15",
+                    maxWidth: "100%",
+                    color: bandTextColor,
+                    whiteSpace: "normal",
+                    overflowWrap: "break-word",
+                    textWrap: "balance",
+                  }}
+                >
+                  {fixture.awayTeam.name}
+                </div>
+              </div>
+            </>
+          ) : (
+            visibleTimeZones.map((tz, i) => (
+              <React.Fragment key={`${fixture.id}-${tz.name}`}>
+                <div className="flex-1 flex flex-col items-center justify-center h-full">
+                  {showTimeLabels && (
+                    <div
+                      className="text-center mb-1 text-sm"
+                      style={{
+                        position: "relative",
+                        top: `${countryLabelOffset}px`,
+                        color: bandTextColor,
+                        fontFamily: "Poppins, sans-serif",
+                      }}
+                    >
+                      {tz.label}
+                    </div>
+                  )}
+                  <div
+                    className="text-center font-bold"
+                    style={{
+                      marginTop: `${(blockStyle === "compact" ? compactTimeBlockOffset : timeBlockOffset)}px`,
+                      position: "relative",
+                      top: "-5px",
+                      left: `${horizontalTimeOffset}px`,
+                      fontSize: `${blockStyle === "compact" ? Math.max(10, timesFontSize - 6) : timesFontSize}px`,
+                      color: bandTextColor,
+                      fontFamily: "Poppins, sans-serif",
+                    }}
+                  >
+                    {fixture.times[tz.name as keyof typeof fixture.times]}
+                  </div>
+                </div>
+                {i < visibleTimeZones.length - 1 && showDividers && (
+                  <div
+                    className="w-px bg-white"
+                    style={{
+                      height: `${dividerHeight}%`,
+                      backgroundColor: bandTextColor,
+                    }}
+                  ></div>
+                )}
+              </React.Fragment>
+            ))
+          )}
         </div>
 
         {/* Logo equipo visitante */}

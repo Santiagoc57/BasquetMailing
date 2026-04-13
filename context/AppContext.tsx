@@ -105,6 +105,62 @@ interface AppContextType extends AppState {
 
 const AppContext = createContext<AppContextType | undefined>(undefined)
 
+const defaultTimeZones: TimeZoneConfig[] = [
+  { name: "ECU", diffHours: -2, label: "ECU", enabled: true },
+  { name: "BOL", diffHours: -1, label: "BOL / CHI", enabled: true },
+  { name: "ARG", diffHours: 0, label: "ARG / BRA / URU", enabled: false },
+  { name: "ESP", diffHours: 4, label: "ESP", enabled: false },
+]
+
+const getDefaultTimeZones = () => defaultTimeZones.map((tz) => ({ ...tz }))
+
+const hasLegacyChileTimeZone = (timeZones?: TimeZoneConfig[]) =>
+  Array.isArray(timeZones) && timeZones.some((tz) => tz.name === "ARG" && (tz.label || "").trim().toUpperCase() === "CHI")
+
+const normalizeExportHorario = (horario?: string, timeZones?: TimeZoneConfig[]) => {
+  if (horario === "ARG" && hasLegacyChileTimeZone(timeZones)) {
+    return "BOL"
+  }
+
+  return horario || "BOL"
+}
+
+const normalizeTimeZones = (timeZones?: TimeZoneConfig[]) => {
+  if (!Array.isArray(timeZones) || timeZones.length === 0) {
+    return getDefaultTimeZones()
+  }
+
+  const hasLegacyChileZone = hasLegacyChileTimeZone(timeZones)
+
+  return timeZones.map((tz) => {
+    if (tz.name === "BOL") {
+      return {
+        ...tz,
+        label: !tz.label || tz.label.trim().toUpperCase() === "BOL" ? "BOL / CHI" : tz.label,
+        enabled: tz.enabled ?? true,
+      }
+    }
+
+    if (tz.name === "ARG" && hasLegacyChileZone) {
+      return {
+        ...tz,
+        label: "ARG / BRA / URU",
+        enabled: false,
+      }
+    }
+
+    if (tz.name === "ECU") {
+      return { ...tz, enabled: tz.enabled ?? true }
+    }
+
+    if (tz.name === "ESP") {
+      return { ...tz, enabled: tz.enabled ?? false }
+    }
+
+    return { ...tz, enabled: tz.enabled ?? true }
+  })
+}
+
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   // Estado inicial
   const [fixtures, setFixtures] = useState<Match[]>([])
@@ -116,11 +172,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   ])
 
   // Configuración de zonas horarias
-  const [timeZones, setTimeZones] = useState<TimeZoneConfig[]>([
-    { name: "ECU", diffHours: -2, label: "ECU" },
-    { name: "ARG", diffHours: 0, label: "" },
-    { name: "BOL", diffHours: -1, label: "BOL / CHI" },
-  ])
+  const [timeZones, setTimeZones] = useState<TimeZoneConfig[]>(getDefaultTimeZones)
 
   // Configuración de visualización
   const [showTimeLabels, setShowTimeLabels] = useState(true)
@@ -224,7 +276,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             setFixtures(data.fixtures || [])
             setTeams(data.teams || [])
             setLeagues(data.leagues || [])
-            setTimeZones(data.timeZones || [])
+            setTimeZones(normalizeTimeZones(data.timeZones))
             setShowTimeLabels(data.showTimeLabels !== undefined ? data.showTimeLabels : true)
             setShowDividers(data.showDividers !== undefined ? data.showDividers : false)
             setShowTeamNames(data.showTeamNames !== undefined ? data.showTeamNames : false)
@@ -258,7 +310,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
               data.horizontalTimeOffsetInput !== undefined ? data.horizontalTimeOffsetInput : 0,
             )
             setExportTextColorBlack(data.exportTextColorBlack !== undefined ? data.exportTextColorBlack : false)
-            setExportHorario(data.exportHorario || "BOL")
+            setExportHorario(normalizeExportHorario(data.exportHorario, data.timeZones))
             setExportSpacing(data.exportSpacing !== undefined ? data.exportSpacing : 20)
             setExportSpacingInput(data.exportSpacingInput !== undefined ? data.exportSpacingInput : 20)
             setExportDateSpacing(data.exportDateSpacing !== undefined ? data.exportDateSpacing : 2)
@@ -435,11 +487,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         { name: "Euroliga", color: "#EB5B27" },
         { name: "Endesa", color: "#EB5B27" },
       ])
-      setTimeZones([
-        { name: "ECU", diffHours: -2, label: "ECU" },
-        { name: "ARG", diffHours: 0, label: "BRA / URU" },
-        { name: "BOL", diffHours: -1, label: "BOL / CHI" },
-      ])
+      setTimeZones(getDefaultTimeZones())
       setShowTimeLabels(true)
       setShowDividers(false)
       setShowTeamNames(false)

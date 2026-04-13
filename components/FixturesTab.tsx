@@ -112,7 +112,7 @@ export const FixturesTab: React.FC = () => {
           } else {
             // Exportar todo en un ZIP
             const zip = new JSZip()
-            const currentHorario = exportHorario || "ARG"
+            const currentHorario = exportHorario || "BOL"
             let horarioLabel = ""
             switch (currentHorario) {
               case "ARG":
@@ -262,8 +262,8 @@ export const FixturesTab: React.FC = () => {
                   onChange={(e) => setExportHorario(e.target.value)}
                   style={{ fontFamily: "Poppins, sans-serif" }}
                 >
-                  <option value="BOL">BOL</option>
-                  <option value="ARG">ARG / URU / CHI</option>
+                  <option value="BOL">BOL / CHI</option>
+                  <option value="ARG">ARG / BRA / URU</option>
                   <option value="ECU">ECU</option>
                 </select>
                 <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2 text-gray-700">
