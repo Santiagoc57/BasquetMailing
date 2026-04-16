@@ -1,4 +1,4 @@
-# Assets del módulo Fixture Gráfico
+# Assets del módulo Gráficos
 
 ## Logos de liga
 Carpeta: `gfx/logos/`

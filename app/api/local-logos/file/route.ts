@@ -3,7 +3,7 @@ import path from "node:path"
 
 export const dynamic = "force-dynamic"
 
-const DEFAULT_LOGOS_DIR = "/Users/santiagocordoba/GITHUBS/[03] Generador de FIXTURE 4/Logos Equipos Basket"
+const DEFAULT_LOGOS_DIR = path.join(process.cwd(), "Logos Equipos Basket")
 const ALLOWED_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".webp", ".svg"])
 
 const getLogosDir = () => process.env.LOCAL_LOGOS_DIR || DEFAULT_LOGOS_DIR
@@ -47,7 +47,7 @@ export async function GET(request: Request) {
 
   try {
     const data = await fs.readFile(filePath)
-    return new Response(data, {
+    return new Response(new Uint8Array(data), {
       headers: {
         "Content-Type": getMimeType(ext),
         "Cache-Control": "no-store",
