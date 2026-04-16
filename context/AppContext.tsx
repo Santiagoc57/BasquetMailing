@@ -161,6 +161,27 @@ const normalizeTimeZones = (timeZones?: TimeZoneConfig[]) => {
   })
 }
 
+const calculateFixtureTimes = (baseTime: string) => {
+  const [hoursRaw, minutesRaw] = baseTime.split(":").map(Number)
+  const hours = Number.isFinite(hoursRaw) ? hoursRaw : 20
+  const minutes = Number.isFinite(minutesRaw) ? minutesRaw : 0
+  const formattedMinutes = minutes.toString().padStart(2, "0")
+  const formatHour = (value: number) => `${((value % 24) + 24) % 24}:${formattedMinutes}`
+
+  return {
+    ARG: `${hours}:${formattedMinutes}`,
+    BOL: formatHour(hours - 1),
+    ECU: formatHour(hours - 2),
+    CHI: formatHour(hours - 1),
+  }
+}
+
+const createEmptyTeam = (id: string): Team => ({
+  id,
+  name: "",
+  logo: "/placeholder.svg?height=100&width=100",
+})
+
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   // Estado inicial
   const [fixtures, setFixtures] = useState<Match[]>([])
@@ -168,6 +189,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [leagues, setLeagues] = useState<League[]>([
     { name: "Euroliga", color: "#EB5B27" },
     { name: "Endesa", color: "#EB5B27" },
+    { name: "Liga Nacional Femenina Chile", color: "#002244" },
     // ... otros valores predeterminados
   ])
 
@@ -181,16 +203,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [backgroundColor, setBackgroundColor] = useState("#FF4500")
 
   // Offsets y tamaños
-  const [timeBlockOffset, setTimeBlockOffset] = useState(-35)
-  const [timeBlockOffsetInput, setTimeBlockOffsetInput] = useState(-35)
-  const [countryLabelOffset, setCountryLabelOffset] = useState(-35)
-  const [countryLabelOffsetInput, setCountryLabelOffsetInput] = useState(-35)
-  const [teamNamesOffset, setTeamNamesOffset] = useState(-45)
-  const [teamNamesOffsetInput, setTeamNamesOffsetInput] = useState(-45)
-  const [compactTimeBlockOffset, setCompactTimeBlockOffset] = useState(-30)
-  const [compactTimeBlockOffsetInput, setCompactTimeBlockOffsetInput] = useState(-30)
-  const [compactTeamNamesOffset, setCompactTeamNamesOffset] = useState(-40)
-  const [compactTeamNamesOffsetInput, setCompactTeamNamesOffsetInput] = useState(-40)
+  const [timeBlockOffset, setTimeBlockOffset] = useState(-24)
+  const [timeBlockOffsetInput, setTimeBlockOffsetInput] = useState(-24)
+  const [countryLabelOffset, setCountryLabelOffset] = useState(-24)
+  const [countryLabelOffsetInput, setCountryLabelOffsetInput] = useState(-24)
+  const [teamNamesOffset, setTeamNamesOffset] = useState(-31)
+  const [teamNamesOffsetInput, setTeamNamesOffsetInput] = useState(-31)
+  const [compactTimeBlockOffset, setCompactTimeBlockOffset] = useState(-21)
+  const [compactTimeBlockOffsetInput, setCompactTimeBlockOffsetInput] = useState(-21)
+  const [compactTeamNamesOffset, setCompactTeamNamesOffset] = useState(-28)
+  const [compactTeamNamesOffsetInput, setCompactTeamNamesOffsetInput] = useState(-28)
   const [teamNamesFontSize, setTeamNamesFontSize] = useState(20)
   const [teamNamesFontSizeInput, setTeamNamesFontSizeInput] = useState(20)
   const [timesFontSize, setTimesFontSize] = useState(32)
@@ -235,17 +257,24 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   // Implementar funciones de manipulación de fixtures, importación/exportación, etc.
   const addFixture = useCallback(() => {
+    const defaultTime = "20:05"
+    const defaultDate = new Date()
+      .toLocaleDateString("es-ES", { day: "2-digit", month: "2-digit" })
+      .replace("/", "-")
+
     setFixtures((prevFixtures) => [
       ...prevFixtures,
       {
-        id: Math.random().toString(36).substring(2, 15),
-        team1: "",
-        team2: "",
-        time: "",
+        id: Date.now().toString(),
+        date: defaultDate,
+        time: defaultTime,
+        homeTeam: teams[0] ?? createEmptyTeam("fixture-home"),
+        awayTeam: teams[1] ?? createEmptyTeam("fixture-away"),
+        times: calculateFixtureTimes(defaultTime),
         league: "Euroliga",
       },
     ])
-  }, [setFixtures])
+  }, [setFixtures, teams])
 
   const removeFixture = useCallback(
     (id: string) => {
@@ -257,7 +286,21 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const updateFixture = useCallback(
     (id: string, field: string, value: any) => {
       setFixtures((prevFixtures) =>
-        prevFixtures.map((fixture) => (fixture.id === id ? { ...fixture, [field]: value } : fixture)),
+        prevFixtures.map((fixture) => {
+          if (fixture.id !== id) {
+            return fixture
+          }
+
+          if (field === "time" && typeof value === "string") {
+            return {
+              ...fixture,
+              time: value,
+              times: calculateFixtureTimes(value),
+            }
+          }
+
+          return { ...fixture, [field]: value }
+        }),
       )
     },
     [setFixtures],
@@ -281,23 +324,23 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             setShowDividers(data.showDividers !== undefined ? data.showDividers : false)
             setShowTeamNames(data.showTeamNames !== undefined ? data.showTeamNames : false)
             setBackgroundColor(data.backgroundColor || "#FF4500")
-            setTimeBlockOffset(data.timeBlockOffset !== undefined ? data.timeBlockOffset : -35)
-            setTimeBlockOffsetInput(data.timeBlockOffsetInput !== undefined ? data.timeBlockOffsetInput : -35)
-            setCountryLabelOffset(data.countryLabelOffset !== undefined ? data.countryLabelOffset : -35)
-            setCountryLabelOffsetInput(data.countryLabelOffsetInput !== undefined ? data.countryLabelOffsetInput : -35)
-            setTeamNamesOffset(data.teamNamesOffset !== undefined ? data.teamNamesOffset : -45)
-            setTeamNamesOffsetInput(data.teamNamesOffsetInput !== undefined ? data.teamNamesOffsetInput : -45)
+            setTimeBlockOffset(data.timeBlockOffset !== undefined ? data.timeBlockOffset : -24)
+            setTimeBlockOffsetInput(data.timeBlockOffsetInput !== undefined ? data.timeBlockOffsetInput : -24)
+            setCountryLabelOffset(data.countryLabelOffset !== undefined ? data.countryLabelOffset : -24)
+            setCountryLabelOffsetInput(data.countryLabelOffsetInput !== undefined ? data.countryLabelOffsetInput : -24)
+            setTeamNamesOffset(data.teamNamesOffset !== undefined ? data.teamNamesOffset : -31)
+            setTeamNamesOffsetInput(data.teamNamesOffsetInput !== undefined ? data.teamNamesOffsetInput : -31)
             setCompactTimeBlockOffset(
-              data.compactTimeBlockOffset !== undefined ? data.compactTimeBlockOffset : -30,
+              data.compactTimeBlockOffset !== undefined ? data.compactTimeBlockOffset : -21,
             )
             setCompactTimeBlockOffsetInput(
-              data.compactTimeBlockOffsetInput !== undefined ? data.compactTimeBlockOffsetInput : -30,
+              data.compactTimeBlockOffsetInput !== undefined ? data.compactTimeBlockOffsetInput : -21,
             )
             setCompactTeamNamesOffset(
-              data.compactTeamNamesOffset !== undefined ? data.compactTeamNamesOffset : -40,
+              data.compactTeamNamesOffset !== undefined ? data.compactTeamNamesOffset : -28,
             )
             setCompactTeamNamesOffsetInput(
-              data.compactTeamNamesOffsetInput !== undefined ? data.compactTeamNamesOffsetInput : -40,
+              data.compactTeamNamesOffsetInput !== undefined ? data.compactTeamNamesOffsetInput : -28,
             )
             setTeamNamesFontSize(data.teamNamesFontSize !== undefined ? data.teamNamesFontSize : 20)
             setTeamNamesFontSizeInput(data.teamNamesFontSizeInput !== undefined ? data.teamNamesFontSizeInput : 20)
@@ -492,16 +535,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       setShowDividers(false)
       setShowTeamNames(false)
       setBackgroundColor("#FF4500")
-      setTimeBlockOffset(-80)
-      setTimeBlockOffsetInput(-80)
-      setCountryLabelOffset(-24)
-      setCountryLabelOffsetInput(-24)
-      setTeamNamesOffset(-49)
-      setTeamNamesOffsetInput(-49)
-      setCompactTimeBlockOffset(-70)
-      setCompactTimeBlockOffsetInput(-70)
-      setCompactTeamNamesOffset(-45)
-      setCompactTeamNamesOffsetInput(-45)
+      setTimeBlockOffset(-56)
+      setTimeBlockOffsetInput(-56)
+      setCountryLabelOffset(-17)
+      setCountryLabelOffsetInput(-17)
+      setTeamNamesOffset(-34)
+      setTeamNamesOffsetInput(-34)
+      setCompactTimeBlockOffset(-49)
+      setCompactTimeBlockOffsetInput(-49)
+      setCompactTeamNamesOffset(-31)
+      setCompactTeamNamesOffsetInput(-31)
       setTeamNamesFontSize(20)
       setTeamNamesFontSizeInput(20)
       setTimesFontSize(32)

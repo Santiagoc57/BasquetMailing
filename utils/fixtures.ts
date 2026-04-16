@@ -1,4 +1,5 @@
 import type { Match, Team, TimeZoneConfig, League } from "@/types"
+import { resolveTeamNameAlias } from "@/utils/team-aliases"
 
 // Función para calcular los horarios en diferentes zonas horarias
 export const calculateTimes = (baseTime: string, timeZones: TimeZoneConfig[]) => {
@@ -34,23 +35,25 @@ export const findOrCreateTeam = (
   teams: Team[],
   addTeam: (team: Team) => void,
 ): Team => {
+  const canonicalName = resolveTeamNameAlias(teamName, leagueName)
+
   // Primero buscar por nombre exacto
-  let team = teams.find((t) => t.name.toLowerCase() === teamName.trim().toLowerCase())
+  let team = teams.find((t) => resolveTeamNameAlias(t.name, t.league ?? leagueName).toLowerCase() === canonicalName.toLowerCase())
 
   // Si no se encuentra, buscar por coincidencia parcial
   if (!team) {
     team = teams.find(
       (t) =>
-        t.name.toLowerCase().includes(teamName.trim().toLowerCase()) ||
-        teamName.trim().toLowerCase().includes(t.name.toLowerCase()),
+        resolveTeamNameAlias(t.name, t.league ?? leagueName).toLowerCase().includes(canonicalName.toLowerCase()) ||
+        canonicalName.toLowerCase().includes(resolveTeamNameAlias(t.name, t.league ?? leagueName).toLowerCase()),
     )
   }
 
   // Si aún no se encuentra, crear un nuevo equipo
   if (!team) {
     team = {
-      id: `new-${Date.now()}-${teamName}`,
-      name: teamName.trim(),
+      id: `new-${Date.now()}-${canonicalName}`,
+      name: canonicalName,
       logo: "/placeholder.svg?height=100&width=100",
       league: leagueName,
     }

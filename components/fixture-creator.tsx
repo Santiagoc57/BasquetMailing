@@ -13,6 +13,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { HexColorPicker } from "react-colorful"
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
+import { resolveTeamNameAlias } from "@/utils/team-aliases"
 
 interface Team {
   id: string
@@ -180,23 +181,25 @@ export default function FixtureCreator() {
   }
 
   const findOrCreateTeam = (teamName: string): Team => {
+    const canonicalName = resolveTeamNameAlias(teamName)
+
     // Primero buscar por nombre exacto
-    let team = teams.find((t) => t.name.toLowerCase() === teamName.trim().toLowerCase())
+    let team = teams.find((t) => resolveTeamNameAlias(t.name).toLowerCase() === canonicalName.toLowerCase())
 
     // Si no se encuentra, buscar por coincidencia parcial
     if (!team) {
       team = teams.find(
         (t) =>
-          t.name.toLowerCase().includes(teamName.trim().toLowerCase()) ||
-          teamName.trim().toLowerCase().includes(t.name.toLowerCase()),
+          resolveTeamNameAlias(t.name).toLowerCase().includes(canonicalName.toLowerCase()) ||
+          canonicalName.toLowerCase().includes(resolveTeamNameAlias(t.name).toLowerCase()),
       )
     }
 
     // Si aún no se encuentra, crear un nuevo equipo
     if (!team) {
       team = {
-        id: `new-${Date.now()}-${teamName}`,
-        name: teamName.trim(),
+        id: `new-${Date.now()}-${canonicalName}`,
+        name: canonicalName,
         logo: "/placeholder.svg?height=100&width=100",
       }
       setTeams((prev) => [...prev, team!])

@@ -1,7 +1,6 @@
 "use client"
 
 import React, { useState, useRef, useCallback, useEffect, useMemo } from "react"
-import html2canvas from "html2canvas"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -29,8 +28,7 @@ import {
   ZoomOut,
   Maximize2,
   Plus,
-  ChevronUp,
-  ChevronDown,
+  GripVertical,
   X,
 } from "lucide-react"
 import { useAppContext } from "@/context/AppContext"
@@ -103,6 +101,7 @@ export interface GfxData {
   col3Label: string
   showCol3: boolean
   showTeamNames: boolean
+  useWhiteLogo?: boolean
   rows: GfxRow[]
 }
 
@@ -128,11 +127,68 @@ export interface ImageTransform {
 }
 
 const DEFAULT_IMAGE_TRANSFORM: ImageTransform = { x: 0, y: 0, scale: 1 }
+export const GRAPHIC_STATE_STORAGE_KEY = "fixture-generator-graphic-state-v1"
+
+interface PersistedGraphicState {
+  version: number
+  league: string
+  language: GfxData["language"]
+  selectedLeagues: string[]
+  leagueImages: Record<string, string>
+  leagueTransforms: Record<string, ImageTransform>
+  leagueLogoVariants: Record<string, boolean>
+}
+
+const isImageTransform = (value: unknown): value is ImageTransform => {
+  if (!value || typeof value !== "object") return false
+  const candidate = value as Partial<ImageTransform>
+  return typeof candidate.x === "number" && typeof candidate.y === "number" && typeof candidate.scale === "number"
+}
+
+const toStringRecord = (value: unknown) => {
+  if (!value || typeof value !== "object") return {}
+
+  const record: Record<string, string> = {}
+  for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
+    if (typeof entry === "string" && entry) {
+      record[key] = entry
+    }
+  }
+
+  return record
+}
+
+const toTransformRecord = (value: unknown) => {
+  if (!value || typeof value !== "object") return {}
+
+  const record: Record<string, ImageTransform> = {}
+  for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
+    if (isImageTransform(entry)) {
+      record[key] = entry
+    }
+  }
+
+  return record
+}
+
+const toBooleanRecord = (value: unknown) => {
+  if (!value || typeof value !== "object") return {}
+
+  const record: Record<string, boolean> = {}
+  for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
+    if (typeof entry === "boolean") {
+      record[key] = entry
+    }
+  }
+
+  return record
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // League config
 // Place league background at: /public/gfx/backgrounds/<slug>.jpg
 // Place league logo at:       /public/gfx/logos/<slug>.png
+// Optional white logo at:     /public/gfx/logos/<name> Blanco.png
 // ─────────────────────────────────────────────────────────────────────────────
 
 interface LeagueCfg {
@@ -142,6 +198,7 @@ interface LeagueCfg {
 
 interface LeagueAssets {
   logo?: string
+  whiteLogo?: string
   background?: string
 }
 
@@ -160,23 +217,27 @@ const LEAGUE_CFG: Record<string, LeagueCfg> = {
   "Liga Dos":        { color: "#787878", dark: "#141414" },
   Libo:              { color: "#007800", dark: "#001800" },
   "Liga Ecuador":    { color: "#c8b800", dark: "#1a1500" },
+  "Ecuador Femenino": { color: "#ff40ff", dark: "#1a001a" },
+  "Liga Nacional Femenina Chile": { color: "#002244", dark: "#001122" },
   Italia:            { color: "#a00620", dark: "#1a0005" },
   Proximo:           { color: "#223600", dark: "#0a1200" },
 }
 
 const LEAGUE_ASSETS: Record<string, LeagueAssets> = {
-  Euroliga:        { logo: "/gfx/logos/Euroliga.png", background: "/gfx/backgrounds/FondoEuroliga.png" },
-  Endesa:          { logo: "/gfx/logos/Liga Endesa.png", background: "/gfx/backgrounds/FondoLigaEndesa.png" },
-  U22:             { logo: "/gfx/logos/Liga U22.png", background: "/gfx/backgrounds/FondoU22.png" },
+  Euroliga:        { logo: "/gfx/logos/Euroliga.png", whiteLogo: "/gfx/logos/Euroliga Blanco.png", background: "/gfx/backgrounds/FondoEuroliga.png" },
+  Endesa:          { logo: "/gfx/logos/Liga Endesa.png", whiteLogo: "/gfx/logos/Liga Endesa Blanco.png", background: "/gfx/backgrounds/FondoLigaEndesa.png" },
+  U22:             { logo: "/gfx/logos/Liga U22.png", whiteLogo: "/gfx/logos/Liga U22 Blanco.png", background: "/gfx/backgrounds/FondoU22.png" },
   "Liga Nacional": { logo: "/gfx/logos/Liga Nacional.png", background: "/gfx/backgrounds/FondoLigaNacional.png" },
   "Liga Argentina": { logo: "/gfx/logos/Liga Argentina.png", background: "/gfx/backgrounds/FondoLigaArgentina.png" },
-  "Primera FEB":   { logo: "/gfx/logos/Primera FEB.png", background: "/gfx/backgrounds/FondoPrimeraFeb.png" },
+  "Primera FEB":   { logo: "/gfx/logos/Primera FEB.png", whiteLogo: "/gfx/logos/Primera Blanco.png", background: "/gfx/backgrounds/FondoPrimeraFeb.png" },
   "Liga Femenina": { logo: "/gfx/logos/Liga Femenina.png", background: "/gfx/backgrounds/FondoLigaFemenina.png" },
   LUB:             { logo: "/gfx/logos/LUB.png", background: "/gfx/backgrounds/FondoUruguayLub.png" },
   "Liga Chery":    { logo: "/gfx/logos/Liga Chery.png", background: "/gfx/backgrounds/FondoChery.png" },
   "Liga Dos":      { logo: "/gfx/logos/Liga Dos.png" },
   Libo:            { logo: "/gfx/logos/Libo Basquet.png" },
   "Liga Ecuador":  { background: "/gfx/backgrounds/FondoEcuMas.png" },
+  "Ecuador Femenino": { logo: "/gfx/logos/LBP Femenina.png", background: "/gfx/backgrounds/FondoEcufem.png" },
+  "Liga Nacional Femenina Chile": { logo: "/gfx/logos/LNF Chile.png", background: "/gfx/backgrounds/FondoLigaNacionalChilenaFemenina.png" },
   Italia:          { logo: "/gfx/logos/LBA SeriE A.png", background: "/gfx/backgrounds/FondoLigaItalia.png" },
   Proximo:         { logo: "/gfx/logos/Liga Proximo.png", background: "/gfx/backgrounds/FondoLigaProximo.png" },
 }
@@ -190,13 +251,16 @@ const LEAGUES = Object.keys(LEAGUE_CFG)
 const slugify = (s: string) =>
   s.toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "")
 
-const getLeagueAssets = (league: string) => {
+const getLeagueAssets = (league: string, useWhiteLogo = false) => {
   const slug = slugify(league)
   const mapped = LEAGUE_ASSETS[league] ?? {}
+  const defaultLogo = mapped.logo ?? `/gfx/logos/${slug}.png`
+  const whiteLogo = mapped.whiteLogo ?? ""
 
   return {
-    logo: mapped.logo ?? `/gfx/logos/${slug}.png`,
+    logo: useWhiteLogo && whiteLogo ? whiteLogo : defaultLogo,
     background: mapped.background ?? `/gfx/backgrounds/${slug}.jpg`,
+    whiteLogo,
   }
 }
 
@@ -224,11 +288,87 @@ const DEFAULT_DATA: GfxData = {
 const getActiveTimeZones = (timeZones: TimeZoneSource[]) => timeZones.filter((tz) => tz.enabled !== false)
 
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value))
+const hasParentheticalTeamTag = (name: string) => /\([^)]+\)/.test(name)
+
+const GRAPHIC_PREVIEW_LEAGUE_ORDER = [
+  "Liga Nacional",
+  "Liga Argentina",
+  "Liga Femenina",
+  "Euroliga",
+  "Endesa",
+  "Primera FEB",
+  "U22",
+  "Italia",
+  "LUB",
+  "Liga Chery",
+  "Liga Dos",
+  "Liga Nacional Femenina",
+  "Liga Nacional Femenina Chile",
+  "Ecuador Femenino",
+]
+
+const sortPreviewLeagues = (leagues: string[]) => {
+  const unique = Array.from(
+    new Set(
+      leagues
+        .map((league) => league.trim())
+        .filter((league) => league.length > 0),
+    ),
+  )
+  const priority = new Map(GRAPHIC_PREVIEW_LEAGUE_ORDER.map((league, index) => [league, index]))
+
+  return unique
+    .map((league, originalIndex) => ({ league, originalIndex }))
+    .sort((a, b) => {
+      const aPriority = priority.has(a.league) ? priority.get(a.league)! : Number.MAX_SAFE_INTEGER
+      const bPriority = priority.has(b.league) ? priority.get(b.league)! : Number.MAX_SAFE_INTEGER
+
+      if (aPriority !== bPriority) return aPriority - bPriority
+      return a.originalIndex - b.originalIndex
+    })
+    .map(({ league }) => league)
+}
+
 const shouldSplitTeamWords = (words: string[]) => {
   if (words.length <= 1) return false
   const firstLen = words[0]?.length ?? 0
   const firstTwoLen = (words[0]?.length ?? 0) + (words[1]?.length ?? 0)
   return firstLen > 8 || firstTwoLen > 8
+}
+
+const normalizeTeamName = (name: string) => name.trim().normalize("NFC").replace(/\s+/g, " ")
+
+const getTeamNameLines = (name: string, allowSplit: boolean, allowShortLayoutOverrides: boolean) => {
+  const normalizedName = normalizeTeamName(name)
+  const lowerName = normalizedName.toLowerCase()
+
+  if (allowSplit && allowShortLayoutOverrides) {
+    if (lowerName === "dragonas importadora alvarado") {
+      return ["Dragonas", "Importadora", "Alvarado"]
+    }
+    if (lowerName === "san pablo burgos") {
+      return ["San Pablo", "Burgos"]
+    }
+  }
+
+  if (hasParentheticalTeamTag(normalizedName)) return [normalizedName]
+  if (!allowSplit) return [normalizedName]
+
+  const words = normalizedName.split(/\s+/).filter(Boolean)
+  if (!shouldSplitTeamWords(words)) return [normalizedName]
+  return words.length >= 3 ? [words.slice(0, 2).join(" "), words.slice(2).join(" ")] : [words[0], words.slice(1).join(" ")]
+}
+
+const getFiveMatchTeamNameNudge = (name: string, bandHeight: number) => {
+  const normalizedName = normalizeTeamName(name)
+  const lowerName = normalizedName.toLowerCase()
+  const singleWordNudge = Math.round(bandHeight * 0.10)
+
+  if (!normalizedName) return 0
+  if (lowerName === "quimsa") return singleWordNudge + Math.round(bandHeight * 0.07)
+  if (hasParentheticalTeamTag(normalizedName)) return singleWordNudge
+  if (normalizedName.split(/\s+/).filter(Boolean).length === 1) return singleWordNudge
+  return 0
 }
 
 const escapeSvgText = (value: string) =>
@@ -376,16 +516,29 @@ const getGraphicLeagueTheme = (league: string, fixtures: FixtureSource[], league
   const leagueCfg = leagues.find((item) => item.name === league)
   const sampleFixture = fixtures.find((item) => item.league === league)
   const fallbackColor = normalizeHexColor(sampleFixture?.leagueColor) ?? normalizeHexColor(leagueCfg?.color) ?? cfg.color
-  const gradientStart = normalizeHexColor(leagueCfg?.gradient?.startColor) ?? fallbackColor
-  const dark = leagueCfg?.gradient?.enabled ? darkenHex(gradientStart, 0.6) : darkenHex(fallbackColor, 0.6)
+  const preferredBandColor =
+    league === "Liga Nacional Femenina Chile"
+      ? normalizeHexColor(leagueCfg?.color) ?? cfg.color
+      : fallbackColor
+  const gradientStart = normalizeHexColor(leagueCfg?.gradient?.startColor) ?? preferredBandColor
+  const dark =
+    league === "Liga Nacional Femenina Chile"
+      ? cfg.dark ?? darkenHex(preferredBandColor, 0.6)
+      : leagueCfg?.gradient?.enabled
+        ? darkenHex(gradientStart, 0.6)
+        : darkenHex(fallbackColor, 0.6)
+  const dateTextColor =
+    league === "U22" || sampleFixture?.dateTextColor === "black"
+      ? "#111111"
+      : "#ffffff"
 
   return {
     bandBackground: leagueCfg?.gradient?.enabled
       ? `linear-gradient(${leagueCfg.gradient.direction}, ${leagueCfg.gradient.startColor}, ${leagueCfg.gradient.endColor})`
-      : fallbackColor,
+      : preferredBandColor,
     dark,
     textColor: sampleFixture?.textColor === "black" ? "#111111" : "#ffffff",
-    dateTextColor: sampleFixture?.dateTextColor === "black" ? "#111111" : "#ffffff",
+    dateTextColor,
   }
 }
 
@@ -481,6 +634,8 @@ const REFERENCE_ROW_HEIGHT = 110
 const REFERENCE_LABEL_FONT_SIZE = 17
 const REFERENCE_TIME_FONT_SIZE = 58
 const SVG_EXPORT_FONT_FAMILY = "Poppins, sans-serif"
+const SVG_EXPORT_POPPINS_400_URL = "/fonts/Poppins-400-latin.woff2"
+const SVG_EXPORT_POPPINS_700_URL = "/fonts/Poppins-700-latin.woff2"
 const SVG_EXPORT_TEXT_ATTRS = `font-family="${SVG_EXPORT_FONT_FAMILY}" font-variant-ligatures="none" font-kerning="none" font-feature-settings="'liga' 0, 'clig' 0, 'calt' 0"`
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -521,32 +676,47 @@ function CanvasRow({
   const fiveMatchLogoScale = 1.118
   const screenLogoBoxScale = 1.104
   const fiveMatchLogoBoxMax = Math.min(210, maxContentHeight * 1.08)
+  const fiveMatchLogoBoxWidthScale = 0.972
+  const fiveMatchLogoBoxHeightScale = 0.847875
   const adjustedLogoBoxSize = isFiveMatchLayout
     ? clamp(Math.ceil(bandHeight * 1.65 * 1.1 * fiveMatchLogoScale * screenLogoBoxScale), 90, fiveMatchLogoBoxMax)
     : logoBoxSize
-  const finalLogoBoxSize = isFiveMatchLayout
-    ? adjustedLogoBoxSize
+  const finalLogoBoxSize = adjustedLogoBoxSize
+  const finalLogoBoxHeight = isFiveMatchLayout
+    ? Math.max(90, Math.round(adjustedLogoBoxSize * fiveMatchLogoBoxHeightScale))
     : logoBoxSize
-  const logoSize = Math.floor(finalLogoBoxSize * 0.8)
+  const logoSize = Math.floor(Math.min(finalLogoBoxSize, finalLogoBoxHeight) * (isFiveMatchLayout ? 0.88 * 1.15 * 0.95 : 0.8))
   const labelFz = REFERENCE_LABEL_FONT_SIZE
   const timeFz = REFERENCE_TIME_FONT_SIZE
   const bandNameFz = isCompactTeamsLayout ? 27 : clamp(Math.floor(bandHeight * 0.32), 24, 42)
   const centeredTimeFz = REFERENCE_TIME_FONT_SIZE
   const teamTimeValue = row.col2 || row.col1 || row.col3 || "--:--"
   const shouldSplitTeamName = renderTeamsLayout && rowCount <= 5
-  const homeNameOffset = isCompactTeamsLayout && row.homeTeam.trim().length <= 12 ? "translateY(12px)" : undefined
-  const awayNameOffset = isCompactTeamsLayout && row.awayTeam.trim().length <= 12 ? "translateY(12px)" : undefined
+  const homeNameOffset = isCompactTeamsLayout
+    ? row.homeTeam.trim().length <= 12
+      ? "translateY(12px)"
+      : undefined
+    : isFiveMatchLayout
+      ? `translateY(${getFiveMatchTeamNameNudge(row.homeTeam, bandHeight)}px)`
+      : undefined
+  const awayNameOffset = isCompactTeamsLayout
+    ? row.awayTeam.trim().length <= 12
+      ? "translateY(12px)"
+      : undefined
+    : isFiveMatchLayout
+      ? `translateY(${getFiveMatchTeamNameNudge(row.awayTeam, bandHeight)}px)`
+      : undefined
   const renderTeamName = (name: string) => {
-    if (!shouldSplitTeamName) return name
-    const words = name.trim().split(/\s+/).filter(Boolean)
-    if (!shouldSplitTeamWords(words)) return name
-    const firstLine = words.length >= 3 ? words.slice(0, 2).join(" ") : words[0]
-    const secondLine = words.length >= 3 ? words.slice(2).join(" ") : words.slice(1).join(" ")
+    const lines = getTeamNameLines(name, shouldSplitTeamName, rowCount <= 4)
+    if (lines.length === 1) return lines[0]
 
     return (
       <>
-        <span style={{ display: "block" }}>{firstLine}</span>
-        <span style={{ display: "block" }}>{secondLine}</span>
+        {lines.map((line, index) => (
+          <span key={`${line}-${index}`} style={{ display: "block", whiteSpace: "nowrap" }}>
+            {line}
+          </span>
+        ))}
       </>
     )
   }
@@ -567,7 +737,7 @@ function CanvasRow({
     }}>
       <div style={{
         width: finalLogoBoxSize,
-        height: finalLogoBoxSize,
+        height: finalLogoBoxHeight,
         background: "#ffffff",
         display: "flex",
         alignItems: "center",
@@ -640,7 +810,7 @@ function CanvasRow({
                   fontSize: centeredTimeFz,
                   fontWeight: 700,
                   lineHeight: 1,
-                  transform: isCompactTeamsLayout ? "translateY(-10px)" : undefined,
+                  transform: isCompactTeamsLayout ? "translateY(-8px)" : undefined,
                 }}>
                 {teamTimeValue}
               </span>
@@ -694,7 +864,7 @@ function CanvasRow({
                   letterSpacing: 0,
                   textTransform: "uppercase",
                   lineHeight: 1,
-                  transform: isFiveMatchLayout ? "translateY(-5px)" : "translateY(-10px)",
+                  transform: isFiveMatchLayout ? "translateY(-5px)" : useShortSizing ? "translateY(-20px)" : "translateY(-10px)",
                 }}>
                   {label}
                 </span>
@@ -704,7 +874,7 @@ function CanvasRow({
                   fontWeight: 700,
                   lineHeight: 0.92,
                   marginTop: 0,
-                  transform: isFiveMatchLayout ? "translateY(-11px)" : "translateY(-20px)",
+                  transform: isFiveMatchLayout ? "translateY(-11px)" : useShortSizing ? "translateY(-24px)" : "translateY(-20px)",
                 }}>
                   {val || "--:--"}
                 </span>
@@ -725,7 +895,7 @@ function CanvasRow({
 
       <div style={{
         width: finalLogoBoxSize,
-        height: finalLogoBoxSize,
+        height: finalLogoBoxHeight,
         background: "#ffffff",
         display: "flex",
         alignItems: "center",
@@ -762,7 +932,7 @@ export function GfxCanvas({
   imageTransform?: ImageTransform
   layoutMode?: "teams" | "times"
 }) {
-  const assets = getLeagueAssets(data.league)
+  const assets = getLeagueAssets(data.league, data.useWhiteLogo ?? false)
   const rowCount = Math.max(1, data.rows.length)
   const dateBreakCount = data.rows.reduce((count, row) => count + (row.dateHeader ? 1 : 0), 0)
   const centerShortLayouts = rowCount <= 4
@@ -770,15 +940,27 @@ export function GfxCanvas({
   const bottomPadding = BOTTOM_PADDING
   const sidePadding = RIGHT_SIDE_PADDING
   const rowGap = data.rows.length > 1 ? (centerShortLayouts ? 12 : rowCount === 5 ? 8 : ROW_GAP) : 0
-  const inlineDateHeight = centerShortLayouts ? 40 : rowCount === 5 ? 26 : INLINE_DATE_HEIGHT
-  const topDateHeight = data.title ? inlineDateHeight : 0
+  const fiveMatchDateGap = rowCount === 5 ? 0 : rowGap
+  const shortInterDateGap = centerShortLayouts ? 0 : rowGap
+  const titleDateHeight = centerShortLayouts ? 28 : rowCount === 5 ? 26 : INLINE_DATE_HEIGHT
+  const rowDateHeight = centerShortLayouts ? 28 : rowCount === 5 ? 26 : INLINE_DATE_HEIGHT
+  const rowDateFontSize = INLINE_DATE_FONT_SIZE
+  const shortDateTextOffset = centerShortLayouts ? Math.round(rowDateHeight * 0.5) : 0
+  const topDateHeight = data.title ? titleDateHeight : 0
   const rowH = centerShortLayouts
     ? 152
     : Math.floor(
-        (CANVAS_H - headerHeight - bottomPadding - rowGap * Math.max(0, rowCount - 1) - inlineDateHeight * dateBreakCount - topDateHeight) / rowCount,
+        (CANVAS_H - headerHeight - bottomPadding - rowGap * Math.max(0, rowCount - 1) - rowDateHeight * dateBreakCount - topDateHeight) / rowCount,
       )
   const leagueLogoHeight = 134
   const leagueLogoMaxWidth = 224
+  const timelineItems = [
+    ...(data.title ? [{ key: `title-${data.title}`, kind: "title" as const, text: data.title }] : []),
+    ...data.rows.flatMap((row) => [
+      ...(row.dateHeader ? [{ key: `date-${row.id}`, kind: "date" as const, text: row.dateHeader }] : []),
+      { key: `row-${row.id}`, kind: "row" as const, row },
+    ]),
+  ]
 
   return (
     <div style={{
@@ -810,7 +992,7 @@ export function GfxCanvas({
                 backgroundImage: `url(${data.mainImage})`,
                 backgroundPosition: "center center",
                 backgroundRepeat: "no-repeat",
-                backgroundSize: "cover",
+                backgroundSize: "contain",
               }}
             />
             <div style={{
@@ -894,7 +1076,7 @@ export function GfxCanvas({
           flex: 1,
           display: "flex",
           flexDirection: "column",
-          gap: rowGap,
+          gap: 0,
           justifyContent: centerShortLayouts ? "center" : "flex-start",
           padding: centerShortLayouts
             ? `0 ${sidePadding}px 0`
@@ -903,60 +1085,76 @@ export function GfxCanvas({
           position: "relative",
           zIndex: 1,
         }}>
-          {data.title && (
-            <div style={{
-              height: inlineDateHeight,
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-            }}>
-              <span style={{
-                color: theme.dateTextColor,
-                fontSize: INLINE_DATE_FONT_SIZE,
-                fontWeight: 700,
-                lineHeight: 1,
-                textAlign: "center",
-                transform: centerShortLayouts ? "translateY(0px)" : "translateY(2px)",
-              }}>
-                {data.title}
-              </span>
-            </div>
-          )}
-          {data.rows.map((row) => (
-            <React.Fragment key={row.id}>
-              {row.dateHeader && (
-                <div style={{
-                  height: inlineDateHeight,
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                }}>
+          {timelineItems.map((item, index) => {
+            const previousItem = timelineItems[index - 1]
+            const isShortDateTransition =
+              centerShortLayouts &&
+              ((previousItem?.kind === "row" && item.kind === "date") ||
+                (previousItem?.kind === "date" && item.kind === "row"))
+            const isTitleTransition = centerShortLayouts && previousItem?.kind === "title"
+            const isFiveMatchDateTransition = rowCount === 5 && previousItem?.kind === "row" && item.kind === "date"
+            const itemGap =
+              index === 0
+                ? 0
+                : isShortDateTransition || isTitleTransition
+                  ? shortInterDateGap
+                  : isFiveMatchDateTransition
+                    ? fiveMatchDateGap
+                    : rowGap
+            const isTitleItem = item.kind === "title"
+
+            if (item.kind === "date" || item.kind === "title") {
+              const blockHeight = isTitleItem ? titleDateHeight : rowDateHeight
+              const fontSize = isTitleItem ? INLINE_DATE_FONT_SIZE : rowDateFontSize
+              return (
+                <div
+                  key={item.key}
+                  style={{
+                    height: blockHeight,
+                    marginTop: itemGap,
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    flexShrink: 0,
+                  }}
+                >
                   <span style={{
                     color: theme.dateTextColor,
-                    fontSize: INLINE_DATE_FONT_SIZE,
+                    fontSize,
                     fontWeight: 700,
                     lineHeight: 1,
                     textAlign: "center",
-                    transform: "translateY(2px)",
+                    transform: centerShortLayouts ? `translateY(${shortDateTextOffset}px)` : "translateY(2px)",
                   }}>
-                    {row.dateHeader}
+                    {item.text}
                   </span>
                 </div>
-              )}
-              <CanvasRow
-                row={row}
-                theme={theme}
-                rowH={rowH}
-                rowCount={rowCount}
-                showTeamNames={data.showTeamNames}
-                showCol3={data.showCol3}
-                layoutMode={layoutMode}
-                col1Label={data.col1Label}
-                col2Label={data.col2Label}
-                col3Label={data.col3Label}
-              />
-            </React.Fragment>
-          ))}
+              )
+            }
+
+            return (
+              <div
+                key={item.key}
+                style={{
+                  marginTop: itemGap,
+                  flexShrink: 0,
+                }}
+              >
+                <CanvasRow
+                  row={item.row}
+                  theme={theme}
+                  rowH={rowH}
+                  rowCount={rowCount}
+                  showTeamNames={data.showTeamNames}
+                  showCol3={data.showCol3}
+                  layoutMode={layoutMode}
+                  col1Label={data.col1Label}
+                  col2Label={data.col2Label}
+                  col3Label={data.col3Label}
+                />
+              </div>
+            )
+          })}
         </div>
       </div>
     </div>
@@ -1011,10 +1209,16 @@ export default function GraphicFixtureTab({
   const [selectedLeagues, setSelectedLeagues] = useState<string[]>([DEFAULT_DATA.league])
   const [leagueImages, setLeagueImages] = useState<Record<string, string>>({})
   const [leagueTransforms, setLeagueTransforms] = useState<Record<string, ImageTransform>>({})
+  const [leagueLogoVariants, setLeagueLogoVariants] = useState<Record<string, boolean>>({})
+  const [draggedPreviewLeague, setDraggedPreviewLeague] = useState<string | null>(null)
+  const [previewDropTarget, setPreviewDropTarget] = useState<{ league: string; position: "before" | "after" } | null>(null)
   const [isDragging, setIsDragging] = useState(false)
+  const [isGraphicStateHydrated, setIsGraphicStateHydrated] = useState(false)
   const [exporting, setExporting]   = useState<"png" | "svg" | null>(null)
   const [loadMsg, setLoadMsg]       = useState<string | null>(null)
-  const activeAssets = getLeagueAssets(data.league)
+  const activeUsesWhiteLogo = leagueLogoVariants[data.league] ?? false
+  const activeBaseAssets = getLeagueAssets(data.league)
+  const activeAssets = getLeagueAssets(data.league, activeUsesWhiteLogo)
   const activeMainImage = leagueImages[data.league] ?? ""
   const activeImgTransform = leagueTransforms[data.league] ?? DEFAULT_IMAGE_TRANSFORM
   const activeTheme = useMemo(
@@ -1029,6 +1233,7 @@ export default function GraphicFixtureTab({
     })
     return Array.from(unique)
   }, [fixtures])
+  const visibleLeagueOptions = allFixtureLeagues
   const graphicSections = useMemo(() => {
     const orderedLeagues = selectedLeagues.length > 0 ? selectedLeagues : [data.league]
     const isSingleLeague = orderedLeagues.length === 1
@@ -1061,6 +1266,7 @@ export default function GraphicFixtureTab({
         data: {
             ...data,
             league: section.league,
+            useWhiteLogo: leagueLogoVariants[section.league] ?? false,
             mainImage: leagueImages[section.league] ?? "",
             title: isSingleLeague ? (data.title || section.synced.title) : section.synced.title,
             rows: section.synced.rows,
@@ -1070,7 +1276,7 @@ export default function GraphicFixtureTab({
             col3Label: data.col3Label,
           },
         } satisfies GraphicSection))
-  }, [data, fixtures, leagueImages, leagueTransforms, leagues, selectedLeagues, timeZones])
+  }, [data, fixtures, leagueImages, leagueLogoVariants, leagueTransforms, leagues, selectedLeagues, timeZones])
   const compositeHeight =
     Math.max(1, graphicSections.length) * CANVAS_H +
     Math.max(0, graphicSections.length - 1) * COMPOSITE_SECTION_GAP
@@ -1081,7 +1287,6 @@ export default function GraphicFixtureTab({
 
   // ── Refs ───────────────────────────────────────────────────────────────────
   const mainInputRef       = useRef<HTMLInputElement>(null)
-  const exportDivRef       = useRef<HTMLDivElement>(null)
   const previewContainerRef = useRef<HTMLDivElement>(null)
 
   // ── ResizeObserver: compute preview scale from container width ─────────────
@@ -1097,8 +1302,69 @@ export default function GraphicFixtureTab({
   }, [])
 
   useEffect(() => {
+    if (!isGraphicStateHydrated) return
+    if (visibleLeagueOptions.length === 0) return
+    if (visibleLeagueOptions.includes(data.league)) return
+    const fallbackLeague = sortPreviewLeagues(visibleLeagueOptions)[0] ?? data.league
+
+    setData((current) => ({
+      ...current,
+      league: fallbackLeague,
+    }))
+  }, [data.league, isGraphicStateHydrated, visibleLeagueOptions])
+
+  useEffect(() => {
     setSelectedLeagues((prev) => (prev.length === 1 ? [data.league] : prev))
   }, [data.league])
+
+  useEffect(() => {
+    if (!isGraphicStateHydrated) return
+    if (allFixtureLeagues.length === 0) return
+
+    setSelectedLeagues((prev) => {
+      const next = prev.filter((league) => allFixtureLeagues.includes(league))
+      if (next.length === prev.length && next.every((league, index) => league === prev[index])) {
+        return prev
+      }
+      if (next.length > 0) {
+        return sortPreviewLeagues(next)
+      }
+      return [sortPreviewLeagues(visibleLeagueOptions)[0] ?? data.league]
+    })
+  }, [allFixtureLeagues, data.league, isGraphicStateHydrated, visibleLeagueOptions])
+
+  useEffect(() => {
+    if (typeof window === "undefined") return
+
+    try {
+      const raw = window.localStorage.getItem(GRAPHIC_STATE_STORAGE_KEY)
+      if (raw) {
+        const parsed = JSON.parse(raw) as Partial<PersistedGraphicState> | null
+        if (parsed && typeof parsed === "object") {
+          const storedLeague =
+            typeof parsed.league === "string" && parsed.league.trim() ? parsed.league : DEFAULT_DATA.league
+          const storedLanguage = parsed.language === "pt-BR" ? "pt-BR" : "es"
+          const storedSelectedLeagues = Array.isArray(parsed.selectedLeagues)
+            ? parsed.selectedLeagues.filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+            : []
+
+          setData((current) => ({
+            ...current,
+            league: storedLeague,
+            language: storedLanguage,
+          }))
+          setSelectedLeagues(sortPreviewLeagues(storedSelectedLeagues.length > 0 ? storedSelectedLeagues : [storedLeague]))
+          setLeagueImages(toStringRecord(parsed.leagueImages))
+          setLeagueTransforms(toTransformRecord(parsed.leagueTransforms))
+          setLeagueLogoVariants(toBooleanRecord(parsed.leagueLogoVariants))
+        }
+      }
+    } catch (error) {
+      console.error("Error restoring saved graphic state", error)
+    } finally {
+      setIsGraphicStateHydrated(true)
+    }
+  }, [])
 
   // ── Global mouse handlers for image dragging ────────────────────────────────
   useEffect(() => {
@@ -1124,6 +1390,26 @@ export default function GraphicFixtureTab({
       window.removeEventListener("mouseup",   onUp)
     }
   }, [data.league, previewScale])
+
+  useEffect(() => {
+    if (!isGraphicStateHydrated || typeof window === "undefined") return
+
+    const payload: PersistedGraphicState = {
+      version: 2,
+      league: data.league,
+      language: data.language,
+      selectedLeagues,
+      leagueImages,
+      leagueTransforms,
+      leagueLogoVariants,
+    }
+
+    try {
+      window.localStorage.setItem(GRAPHIC_STATE_STORAGE_KEY, JSON.stringify(payload))
+    } catch (error) {
+      console.error("Error saving graphic state", error)
+    }
+  }, [data.language, data.league, isGraphicStateHydrated, leagueImages, leagueLogoVariants, leagueTransforms, selectedLeagues])
 
   const syncFromFixtures = useCallback(
     (showFeedback = false) => {
@@ -1166,8 +1452,9 @@ export default function GraphicFixtureTab({
 
   // ── Auto-load fixtures when source data changes ────────────────────────────
   useEffect(() => {
+    if (!isGraphicStateHydrated) return
     syncFromFixtures(false)
-  }, [syncFromFixtures])
+  }, [isGraphicStateHydrated, syncFromFixtures])
 
   // ── Data helpers ────────────────────────────────────────────────────────────
   const setField = <K extends keyof GfxData>(k: K, v: GfxData[K]) =>
@@ -1185,7 +1472,7 @@ export default function GraphicFixtureTab({
       return
     }
 
-    setSelectedLeagues(allFixtureLeagues)
+    setSelectedLeagues(sortPreviewLeagues(allFixtureLeagues))
     setLoadMsg(`✓ ${allFixtureLeagues.length} ligas cargadas desde el fixture actual`)
     setTimeout(() => setLoadMsg(null), 3000)
   }, [allFixtureLeagues])
@@ -1207,13 +1494,27 @@ export default function GraphicFixtureTab({
     })
   }, [data.league])
 
-  const moveLeagueInPreview = useCallback((index: number, direction: -1 | 1) => {
+  const moveLeagueToEnd = useCallback((league: string) => {
     setSelectedLeagues((prev) => {
-      const targetIndex = index + direction
-      if (targetIndex < 0 || targetIndex >= prev.length) return prev
-      const next = [...prev]
-      const [item] = next.splice(index, 1)
-      next.splice(targetIndex, 0, item)
+      if (!prev.includes(league)) return prev
+      const next = prev.filter((item) => item !== league)
+      next.push(league)
+      return next
+    })
+  }, [])
+
+  const moveLeagueRelative = useCallback((league: string, targetLeague: string, position: "before" | "after") => {
+    setSelectedLeagues((prev) => {
+      const fromIndex = prev.indexOf(league)
+      const targetIndex = prev.indexOf(targetLeague)
+      if (fromIndex < 0 || targetIndex < 0 || league === targetLeague) return prev
+
+      const next = prev.filter((item) => item !== league)
+      const adjustedTargetIndex = next.indexOf(targetLeague)
+      if (adjustedTargetIndex < 0) return prev
+
+      const insertIndex = position === "after" ? adjustedTargetIndex + 1 : adjustedTargetIndex
+      next.splice(insertIndex, 0, league)
       return next
     })
   }, [])
@@ -1225,11 +1526,26 @@ export default function GraphicFixtureTab({
     setLeagueTransforms((prev) => ({ ...prev, [data.league]: DEFAULT_IMAGE_TRANSFORM }))
   }, [data.league])
 
+  const openMainImagePicker = useCallback(() => {
+    mainInputRef.current?.click()
+  }, [])
+
   const onDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault(); setIsDragging(false)
+    e.stopPropagation()
     const file = e.dataTransfer.files?.[0]
     if (file && file.type.startsWith("image/")) handleMainImage(file)
   }, [handleMainImage])
+
+  const onPreviewDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault()
+    e.dataTransfer.dropEffect = "copy"
+    setIsDragging(true)
+  }, [])
+
+  const onPreviewDragLeave = useCallback(() => {
+    setIsDragging(false)
+  }, [])
 
   // ── Image pan/zoom interaction ──────────────────────────────────────────────
   const onImgMouseDown = (e: React.MouseEvent) => {
@@ -1244,6 +1560,7 @@ export default function GraphicFixtureTab({
   }
 
   const onImgWheel = (e: React.WheelEvent) => {
+    if (!activeMainImage) return
     e.preventDefault()
     const delta = e.deltaY > 0 ? -0.08 : 0.08
     setLeagueTransforms((prev) => {
@@ -1267,261 +1584,348 @@ export default function GraphicFixtureTab({
   const resetTransform = () =>
     setLeagueTransforms((prev) => ({ ...prev, [data.league]: DEFAULT_IMAGE_TRANSFORM }))
 
-  // ── Export PNG ──────────────────────────────────────────────────────────────
+  // ── Export SVG source ──────────────────────────────────────────────────────
+  const buildGraphicSvgString = useCallback(async (): Promise<string | null> => {
+    if (graphicSections.length === 0) return null
+    await document.fonts.ready
+    const assetCache = new Map<string, string>()
+    const requireInlineDataUrl = async (src: string) => {
+      const dataUrl = await fetchAssetAsDataUrl(src, assetCache)
+      if (!dataUrl.startsWith("data:")) {
+        throw new Error(`No se pudo incrustar el recurso ${src}`)
+      }
+      return dataUrl
+    }
+
+    const [poppins400, poppins700] = await Promise.all([
+      requireInlineDataUrl(SVG_EXPORT_POPPINS_400_URL),
+      requireInlineDataUrl(SVG_EXPORT_POPPINS_700_URL),
+    ])
+
+    const defs: string[] = []
+    const fontDefs = [
+      `@font-face{font-family:'Poppins';font-style:normal;font-weight:400;font-display:block;src:url(${poppins400}) format('woff2')}`,
+      `@font-face{font-family:'Poppins';font-style:normal;font-weight:700;font-display:block;src:url(${poppins700}) format('woff2')}`,
+    ]
+
+    const renderMultilineText = (
+      lines: string[],
+      centerX: number,
+      startY: number,
+      fontSize: number,
+      color: string,
+      weight: number,
+      lineHeight = 1.02,
+    ) => {
+      const firstBaseline = startY
+      return `<text x="${centerX}" y="${firstBaseline}" text-anchor="middle" fill="${color}" ${SVG_EXPORT_TEXT_ATTRS} font-size="${fontSize}" font-weight="${weight}">${
+        lines.map((line, index) => `<tspan x="${centerX}" dy="${index === 0 ? 0 : fontSize * lineHeight}">${escapeSvgText(line)}</tspan>`).join("")
+      }</text>`
+    }
+
+    const renderSection = async (section: GraphicSection, index: number) => {
+      const sectionY = index * (CANVAS_H + COMPOSITE_SECTION_GAP)
+      const { data: sectionData, theme, imageTransform, layoutMode } = section
+      const assets = getLeagueAssets(sectionData.league)
+      const rowCount = Math.max(1, sectionData.rows.length)
+      const dateBreakCount = sectionData.rows.reduce((count, row) => count + (row.dateHeader ? 1 : 0), 0)
+      const centerShortLayouts = rowCount <= 4
+      const bottomPadding = BOTTOM_PADDING
+      const sidePadding = RIGHT_SIDE_PADDING
+      const rowGap = sectionData.rows.length > 1 ? (centerShortLayouts ? 12 : rowCount === 5 ? 8 : ROW_GAP) : 0
+      const fiveMatchDateGap = rowCount === 5 ? 0 : rowGap
+      const shortInterDateGap = centerShortLayouts ? 0 : rowGap
+      const titleDateHeight = centerShortLayouts ? 28 : rowCount === 5 ? 26 : INLINE_DATE_HEIGHT
+      const rowDateHeight = centerShortLayouts ? 28 : rowCount === 5 ? 26 : INLINE_DATE_HEIGHT
+      const rowDateFontSize = INLINE_DATE_FONT_SIZE
+      const shortDateTextOffset = centerShortLayouts ? Math.round(rowDateHeight * 0.5) : 0
+      const topDateHeight = sectionData.title ? titleDateHeight : 0
+      const rowH = centerShortLayouts
+        ? 152
+        : Math.floor(
+            (CANVAS_H - bottomPadding - rowGap * Math.max(0, rowCount - 1) - rowDateHeight * dateBreakCount - topDateHeight) / rowCount,
+          )
+      const useShortSizing = rowCount <= 4
+      const isCompactTeamsLayout = layoutMode === "teams" && useShortSizing
+      const renderTeamsLayout = layoutMode === "teams" || sectionData.showTeamNames
+      const effectiveRowH = useShortSizing ? Math.min(rowH, 150) : Math.min(rowH, REFERENCE_ROW_HEIGHT)
+      const maxContentHeight = Math.max(72, effectiveRowH - 4)
+      const bandHeight = useShortSizing
+        ? Math.min(101, maxContentHeight)
+        : Math.min(clamp(Math.floor(effectiveRowH * 0.78), 70, Math.min(118, maxContentHeight)))
+      const isFiveMatchLayout = rowCount === 5
+      const baseLogoBoxSize = useShortSizing
+        ? clamp(Math.ceil(132 * 1.1), 96, Math.min(174, maxContentHeight))
+        : clamp(Math.ceil(bandHeight * (isFiveMatchLayout ? 1.65 : 1.32) * 1.1), 90, Math.min(174, maxContentHeight))
+      const svgLogoBoxScale = 1.104
+      const fiveMatchLogoBoxBoost = isFiveMatchLayout ? 1.2 : 1
+      const fiveMatchLogoBoxMax = Math.min(240, maxContentHeight * 1.3)
+      const fiveMatchLogoBoxWidthScale = 0.972
+      const fiveMatchLogoBoxHeightScale = 0.847875
+      const fiveMatchRawLogoBoxSize = isFiveMatchLayout
+        ? clamp(Math.ceil(bandHeight * 1.65 * 1.1 * 1.118 * svgLogoBoxScale * fiveMatchLogoBoxBoost), 90, fiveMatchLogoBoxMax)
+        : baseLogoBoxSize
+      const finalLogoBoxSize = isFiveMatchLayout
+        ? Math.max(90, Math.round(fiveMatchRawLogoBoxSize * fiveMatchLogoBoxWidthScale))
+        : fiveMatchRawLogoBoxSize
+      const finalLogoBoxHeight = isFiveMatchLayout
+        ? Math.max(90, Math.round(fiveMatchRawLogoBoxSize * fiveMatchLogoBoxHeightScale))
+        : baseLogoBoxSize
+      const logoSize = Math.floor(Math.min(finalLogoBoxSize, finalLogoBoxHeight) * (isFiveMatchLayout ? 0.88 * 1.15 * 0.95 : 0.8))
+      const labelFz = REFERENCE_LABEL_FONT_SIZE
+      const timeFz = REFERENCE_TIME_FONT_SIZE
+      const bandNameFz = isCompactTeamsLayout ? 27 : clamp(Math.floor(bandHeight * 0.32), 24, 42)
+      const centeredTimeFz = REFERENCE_TIME_FONT_SIZE
+      const leagueLogoHeight = 134
+      const leagueLogoMaxWidth = 224
+      const contentWidth = RIGHT_W - sidePadding * 2
+      const rowBoxX = LEFT_W + sidePadding
+      const bandX = rowBoxX + finalLogoBoxSize
+      const bandWidth = contentWidth - finalLogoBoxSize * 2
+      const awayBoxX = LEFT_W + RIGHT_W - sidePadding - finalLogoBoxSize
+      const sectionClipId = `section-clip-${index}`
+      const leftClipId = `left-clip-${index}`
+      const rightBandGradientId = `band-gradient-${index}`
+
+      defs.push(`<clipPath id="${sectionClipId}"><rect x="0" y="${sectionY}" width="${CANVAS_W}" height="${CANVAS_H}" rx="${CANVAS_RADIUS}" ry="${CANVAS_RADIUS}" /></clipPath>`)
+      defs.push(`<clipPath id="${leftClipId}"><rect x="0" y="${sectionY}" width="${LEFT_W}" height="${CANVAS_H}" /></clipPath>`)
+
+      const bandGradient = typeof theme.bandBackground === "string" && theme.bandBackground.startsWith("linear-gradient(")
+        ? parseSvgLinearGradient(theme.bandBackground, rightBandGradientId)
+        : null
+      if (bandGradient) defs.push(bandGradient.def)
+      const bandFill = bandGradient ? bandGradient.fill : theme.bandBackground
+
+      const [
+        leagueLogoHref,
+        rightBackgroundHref,
+        leftMainImageHref,
+        ...rowLogoHrefs
+      ] = await Promise.all([
+        fetchAssetAsDataUrl(assets.logo, assetCache),
+        fetchAssetAsDataUrl(assets.background, assetCache),
+        fetchAssetAsDataUrl(sectionData.mainImage, assetCache),
+        ...sectionData.rows.flatMap((row) => [
+          fetchAssetAsDataUrl(row.homeTeamLogo, assetCache),
+          fetchAssetAsDataUrl(row.awayTeamLogo, assetCache),
+        ]),
+      ])
+
+      const logoPairAt = (rowIndex: number) => ({
+        home: rowLogoHrefs[rowIndex * 2] ?? "",
+        away: rowLogoHrefs[rowIndex * 2 + 1] ?? "",
+      })
+
+      const sectionHeights: number[] = []
+      if (sectionData.title) {
+        sectionHeights.push(topDateHeight, centerShortLayouts ? shortInterDateGap : rowGap)
+      }
+      sectionData.rows.forEach((row, rowIndex) => {
+        if (row.dateHeader) {
+          sectionHeights.push(rowDateHeight)
+        }
+        sectionHeights.push(rowH)
+        const nextRow = sectionData.rows[rowIndex + 1]
+        const gapAfterRow = nextRow
+          ? centerShortLayouts && nextRow.dateHeader
+            ? shortInterDateGap
+            : rowCount === 5 && nextRow.dateHeader
+              ? fiveMatchDateGap
+              : rowGap
+          : rowGap
+        if (gapAfterRow > 0) {
+          sectionHeights.push(gapAfterRow)
+        }
+      })
+      const totalContentHeight = sectionHeights.reduce((sum, itemHeight) => sum + itemHeight, 0)
+      let cursorY = centerShortLayouts ? sectionY + (CANVAS_H - totalContentHeight) / 2 : sectionY
+      const rightCenterX = LEFT_W + RIGHT_W / 2
+
+      let body = `<g clip-path="url(#${sectionClipId})">`
+      body += `<rect x="0" y="${sectionY}" width="${CANVAS_W}" height="${CANVAS_H}" fill="#000000" />`
+      body += `<rect x="0" y="${sectionY}" width="${LEFT_W}" height="${CANVAS_H}" fill="#050505" />`
+
+      if (leftMainImageHref) {
+        const leftCx = LEFT_W / 2
+        const leftCy = sectionY + CANVAS_H / 2
+        body += `<g clip-path="url(#${leftClipId})" transform="translate(${leftCx + imageTransform.x} ${leftCy + imageTransform.y}) scale(${imageTransform.scale}) translate(${-leftCx} ${-sectionY - CANVAS_H / 2})">`
+        body += `<image x="0" y="${sectionY}" width="${LEFT_W}" height="${CANVAS_H}" preserveAspectRatio="xMidYMid meet" href="${leftMainImageHref}" xlink:href="${leftMainImageHref}" />`
+        body += `</g>`
+      }
+
+      if (leagueLogoHref) {
+        body += `<image x="24" y="${sectionY + 26}" width="${leagueLogoMaxWidth}" height="${leagueLogoHeight}" preserveAspectRatio="xMinYMin meet" href="${leagueLogoHref}" xlink:href="${leagueLogoHref}" />`
+      }
+
+      body += `<rect x="${LEFT_W}" y="${sectionY}" width="${RIGHT_W}" height="${CANVAS_H}" fill="${escapeSvgText(theme.dark)}" />`
+      if (rightBackgroundHref) {
+        body += `<image x="${LEFT_W}" y="${sectionY}" width="${RIGHT_W}" height="${CANVAS_H}" preserveAspectRatio="none" href="${rightBackgroundHref}" xlink:href="${rightBackgroundHref}" />`
+      }
+
+      const renderLogoBox = (x: number, y: number, href: string) => {
+        let box = `<rect x="${x}" y="${y}" width="${finalLogoBoxSize}" height="${finalLogoBoxHeight}" fill="#ffffff" />`
+        if (href) {
+          box += `<image x="${x + (finalLogoBoxSize - logoSize) / 2}" y="${y + (finalLogoBoxHeight - logoSize) / 2}" width="${logoSize}" height="${logoSize}" preserveAspectRatio="xMidYMid meet" href="${href}" xlink:href="${href}" />`
+        } else {
+          box += `<rect x="${x + (finalLogoBoxSize - logoSize) / 2}" y="${y + (finalLogoBoxHeight - logoSize) / 2}" width="${logoSize}" height="${logoSize}" rx="10" ry="10" fill="#e5e7eb" />`
+        }
+        return box
+      }
+
+      const renderDateText = (text: string, y: number, translateY: number, blockHeight: number, fontSize: number) =>
+        `<text x="${rightCenterX}" y="${y + blockHeight / 2 + translateY}" text-anchor="middle" dominant-baseline="middle" fill="${theme.dateTextColor}" ${SVG_EXPORT_TEXT_ATTRS} font-size="${fontSize}" font-weight="700">${escapeSvgText(text)}</text>`
+
+      if (sectionData.title) {
+        body += renderDateText(sectionData.title, cursorY, centerShortLayouts ? shortDateTextOffset : 20, titleDateHeight, INLINE_DATE_FONT_SIZE)
+        cursorY += titleDateHeight + (centerShortLayouts ? shortInterDateGap : rowGap)
+      }
+
+      sectionData.rows.forEach((row, rowIndex) => {
+        if (row.dateHeader) {
+          body += renderDateText(row.dateHeader, cursorY, centerShortLayouts ? shortDateTextOffset : 20, rowDateHeight, rowDateFontSize)
+          cursorY += rowDateHeight + shortInterDateGap
+        }
+
+        const rowY = cursorY
+        const boxY = rowY + (rowH - finalLogoBoxHeight) / 2
+        const currentBandY = rowY + (rowH - bandHeight) / 2
+        const logos = logoPairAt(rowIndex)
+
+        body += renderLogoBox(rowBoxX, boxY, logos.home)
+        body += renderLogoBox(awayBoxX, boxY, logos.away)
+        body += `<rect x="${bandX}" y="${currentBandY}" width="${bandWidth}" height="${bandHeight}" fill="${bandFill}" />`
+
+        if (renderTeamsLayout) {
+          const segmentWidth = (bandWidth - 4) / 3
+          const dividerColor = dividerSvgColor(theme.textColor)
+          const nameLines = (name: string) => {
+            return getTeamNameLines(name, renderTeamsLayout && rowCount <= 5, useShortSizing)
+          }
+          const homeLines = nameLines(row.homeTeam)
+          const awayLines = nameLines(row.awayTeam)
+          const homeCenterX = bandX + segmentWidth / 2
+          const timeCenterX = bandX + segmentWidth + 2 + segmentWidth / 2
+          const awayCenterX = bandX + (segmentWidth + 2) * 2 + segmentWidth / 2
+          const compactTeamsNudge = Math.round(bandHeight * 0.05)
+          const homeStartY = currentBandY + (
+            isCompactTeamsLayout
+              ? 34 + (homeLines.length === 1 && row.homeTeam.trim().length <= 12 ? 12 : 0) + 8 + compactTeamsNudge
+              : bandHeight / 2 - bandHeight * 0.07 + getFiveMatchTeamNameNudge(row.homeTeam, bandHeight)
+          )
+          const awayStartY = currentBandY + (
+            isCompactTeamsLayout
+              ? 34 + (awayLines.length === 1 && row.awayTeam.trim().length <= 12 ? 12 : 0) + 8 + compactTeamsNudge
+              : bandHeight / 2 - bandHeight * 0.07 + getFiveMatchTeamNameNudge(row.awayTeam, bandHeight)
+          )
+          const timeY = currentBandY + (
+            isCompactTeamsLayout
+              ? 74 - compactTeamsNudge
+              : bandHeight / 2 + bandHeight * 0.25
+          )
+
+          body += `<rect x="${bandX + segmentWidth}" y="${currentBandY + bandHeight * 0.12}" width="2" height="${bandHeight * 0.76}" fill="${dividerColor}" />`
+          body += `<rect x="${bandX + segmentWidth + 2 + segmentWidth}" y="${currentBandY + bandHeight * 0.12}" width="2" height="${bandHeight * 0.76}" fill="${dividerColor}" />`
+          body += renderMultilineText(homeLines, homeCenterX, homeStartY, bandNameFz, theme.textColor, 400)
+          body += renderMultilineText(awayLines, awayCenterX, awayStartY, bandNameFz, theme.textColor, 400)
+          body += `<text x="${timeCenterX}" y="${timeY}" text-anchor="middle" dominant-baseline="${isCompactTeamsLayout ? "middle" : "middle"}" fill="${theme.textColor}" ${SVG_EXPORT_TEXT_ATTRS} font-size="${centeredTimeFz}" font-weight="700">${escapeSvgText(row.col2 || row.col1 || row.col3 || "--:--")}</text>`
+        } else {
+          const columns = [
+            { label: sectionData.col1Label, value: row.col1 },
+            { label: sectionData.col2Label, value: row.col2 },
+            ...(sectionData.showCol3 ? [{ label: sectionData.col3Label, value: row.col3 }] : []),
+          ]
+          const colWidth = (bandWidth - (columns.length - 1) * 2) / columns.length
+          const dividerColor = dividerSvgColor(theme.textColor)
+          const shortLayoutTagY = centerShortLayouts ? 0.22 : 0
+          const shortLayoutValueY = centerShortLayouts ? 0.78 : 0
+
+          columns.forEach((column, columnIndex) => {
+            const colX = bandX + columnIndex * (colWidth + 2)
+            const centerX = colX + colWidth / 2
+            const labelY = currentBandY + bandHeight * (isFiveMatchLayout ? 0.24 : centerShortLayouts ? shortLayoutTagY : 0.2)
+            const valueY = currentBandY + bandHeight * (isFiveMatchLayout ? 0.84 : centerShortLayouts ? shortLayoutValueY : 0.68)
+            body += `<text x="${centerX}" y="${labelY}" text-anchor="middle" dominant-baseline="middle" fill="${theme.textColor}" ${SVG_EXPORT_TEXT_ATTRS} font-size="${labelFz}" font-weight="400">${escapeSvgText(column.label.toUpperCase())}</text>`
+            body += `<text x="${centerX}" y="${valueY}" text-anchor="middle" dominant-baseline="middle" fill="${theme.textColor}" ${SVG_EXPORT_TEXT_ATTRS} font-size="${timeFz}" font-weight="700">${escapeSvgText(column.value || "--:--")}</text>`
+            if (columnIndex < columns.length - 1) {
+              body += `<rect x="${colX + colWidth}" y="${currentBandY + bandHeight * 0.12}" width="2" height="${bandHeight * 0.76}" fill="${dividerColor}" />`
+            }
+          })
+        }
+
+        const nextRow = sectionData.rows[rowIndex + 1]
+        const gapAfterRow = nextRow
+          ? centerShortLayouts && nextRow.dateHeader
+            ? shortInterDateGap
+            : rowCount === 5 && nextRow.dateHeader
+              ? fiveMatchDateGap
+              : rowGap
+          : rowGap
+        cursorY += rowH + gapAfterRow
+      })
+
+      body += `</g>`
+      return body
+    }
+
+    const bodies = await Promise.all(graphicSections.map((section, index) => renderSection(section, index)))
+    return `<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" version="1.1" width="${CANVAS_W}" height="${compositeHeight}" viewBox="0 0 ${CANVAS_W} ${compositeHeight}">
+  <defs><style>${fontDefs.join("")}</style>${defs.join("")}</defs>
+  ${bodies.join("")}
+</svg>`
+  }, [compositeHeight, graphicSections])
+
   const exportPng = useCallback(async () => {
-    if (!exportDivRef.current) return
     setExporting("png")
     try {
-      await document.fonts.ready
-      const canvas = await html2canvas(exportDivRef.current, {
-        width: CANVAS_W, height: compositeHeight,
-        scale: 1, useCORS: true, allowTaint: false,
-        backgroundColor: null, logging: false,
+      const svgStr = await buildGraphicSvgString()
+      if (!svgStr) return
+      const response = await fetch(`/api/gfx/export/png?width=${CANVAS_W}&height=${compositeHeight}`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "image/svg+xml;charset=utf-8",
+        },
+        body: svgStr,
       })
+
+      if (!response.ok) {
+        throw new Error(`PNG export failed with status ${response.status}`)
+      }
+
+      const pngBlob = await response.blob()
+      const url = URL.createObjectURL(pngBlob)
       const link = document.createElement("a")
-      link.href     = canvas.toDataURL("image/png")
+      link.href = url
       link.download = `fixture-${slugify(data.league)}-${Date.now()}.png`
       link.click()
+      setTimeout(() => URL.revokeObjectURL(url), 0)
     } catch (err) {
       console.error("PNG export error", err)
       alert("Error al exportar PNG. Revisá la consola para más detalles.")
-    } finally { setExporting(null) }
-  }, [compositeHeight, data.league])
+    } finally {
+      setExporting(null)
+    }
+  }, [buildGraphicSvgString, compositeHeight, data.league])
 
-  // ── Export SVG ──────────────────────────────────────────────────────────────
   const exportSvg = useCallback(async () => {
-    if (graphicSections.length === 0) return
     setExporting("svg")
     try {
-      await document.fonts.ready
-      const assetCache = new Map<string, string>()
-      const defs: string[] = []
-
-      const renderMultilineText = (
-        lines: string[],
-        centerX: number,
-        startY: number,
-        fontSize: number,
-        color: string,
-        weight: number,
-        lineHeight = 1.02,
-      ) => {
-        const firstBaseline = startY
-        return `<text x="${centerX}" y="${firstBaseline}" text-anchor="middle" fill="${color}" ${SVG_EXPORT_TEXT_ATTRS} font-size="${fontSize}" font-weight="${weight}">${
-          lines.map((line, index) => `<tspan x="${centerX}" dy="${index === 0 ? 0 : fontSize * lineHeight}">${escapeSvgText(line)}</tspan>`).join("")
-        }</text>`
-      }
-
-      const renderSection = async (section: GraphicSection, index: number) => {
-        const sectionY = index * (CANVAS_H + COMPOSITE_SECTION_GAP)
-        const { data: sectionData, theme, imageTransform, layoutMode } = section
-        const assets = getLeagueAssets(sectionData.league)
-        const rowCount = Math.max(1, sectionData.rows.length)
-        const dateBreakCount = sectionData.rows.reduce((count, row) => count + (row.dateHeader ? 1 : 0), 0)
-        const centerShortLayouts = rowCount <= 4
-        const bottomPadding = BOTTOM_PADDING
-        const sidePadding = RIGHT_SIDE_PADDING
-        const rowGap = sectionData.rows.length > 1 ? (centerShortLayouts ? 12 : rowCount === 5 ? 8 : ROW_GAP) : 0
-        const inlineDateHeight = centerShortLayouts ? 40 : rowCount === 5 ? 26 : INLINE_DATE_HEIGHT
-        const topDateHeight = sectionData.title ? inlineDateHeight : 0
-        const rowH = centerShortLayouts
-          ? 152
-          : Math.floor(
-              (CANVAS_H - bottomPadding - rowGap * Math.max(0, rowCount - 1) - inlineDateHeight * dateBreakCount - topDateHeight) / rowCount,
-            )
-        const useShortSizing = rowCount <= 4
-        const isCompactTeamsLayout = layoutMode === "teams" && useShortSizing
-        const renderTeamsLayout = layoutMode === "teams" || sectionData.showTeamNames
-        const effectiveRowH = useShortSizing ? Math.min(rowH, 150) : Math.min(rowH, REFERENCE_ROW_HEIGHT)
-        const maxContentHeight = Math.max(72, effectiveRowH - 4)
-        const bandHeight = useShortSizing
-          ? Math.min(101, maxContentHeight)
-          : Math.min(clamp(Math.floor(effectiveRowH * 0.78), 70, Math.min(118, maxContentHeight)))
-        const isFiveMatchLayout = rowCount === 5
-        const baseLogoBoxSize = useShortSizing
-          ? clamp(Math.ceil(132 * 1.1), 96, Math.min(174, maxContentHeight))
-          : clamp(Math.ceil(bandHeight * (isFiveMatchLayout ? 1.65 : 1.32) * 1.1), 90, Math.min(174, maxContentHeight))
-        const svgLogoBoxScale = 1.104
-        const fiveMatchLogoBoxMax = Math.min(210, maxContentHeight * 1.08)
-        const finalLogoBoxSize = isFiveMatchLayout
-          ? clamp(Math.ceil(bandHeight * 1.65 * 1.1 * 1.118 * svgLogoBoxScale), 90, fiveMatchLogoBoxMax)
-          : baseLogoBoxSize
-        const logoSize = Math.floor(finalLogoBoxSize * 0.8)
-        const labelFz = REFERENCE_LABEL_FONT_SIZE
-        const timeFz = REFERENCE_TIME_FONT_SIZE
-        const bandNameFz = isCompactTeamsLayout ? 27 : clamp(Math.floor(bandHeight * 0.32), 24, 42)
-        const centeredTimeFz = REFERENCE_TIME_FONT_SIZE
-        const leagueLogoHeight = 134
-        const leagueLogoMaxWidth = 224
-        const contentWidth = RIGHT_W - sidePadding * 2
-        const rowBoxX = LEFT_W + sidePadding
-        const bandX = rowBoxX + finalLogoBoxSize
-        const bandWidth = contentWidth - finalLogoBoxSize * 2
-        const awayBoxX = LEFT_W + RIGHT_W - sidePadding - finalLogoBoxSize
-        const sectionClipId = `section-clip-${index}`
-        const leftClipId = `left-clip-${index}`
-        const rightBandGradientId = `band-gradient-${index}`
-
-        defs.push(`<clipPath id="${sectionClipId}"><rect x="0" y="${sectionY}" width="${CANVAS_W}" height="${CANVAS_H}" rx="${CANVAS_RADIUS}" ry="${CANVAS_RADIUS}" /></clipPath>`)
-        defs.push(`<clipPath id="${leftClipId}"><rect x="0" y="${sectionY}" width="${LEFT_W}" height="${CANVAS_H}" /></clipPath>`)
-
-        const bandGradient = typeof theme.bandBackground === "string" && theme.bandBackground.startsWith("linear-gradient(")
-          ? parseSvgLinearGradient(theme.bandBackground, rightBandGradientId)
-          : null
-        if (bandGradient) defs.push(bandGradient.def)
-        const bandFill = bandGradient ? bandGradient.fill : theme.bandBackground
-
-        const [
-          leagueLogoHref,
-          rightBackgroundHref,
-          leftMainImageHref,
-          ...rowLogoHrefs
-        ] = await Promise.all([
-          fetchAssetAsDataUrl(assets.logo, assetCache),
-          fetchAssetAsDataUrl(assets.background, assetCache),
-          fetchAssetAsDataUrl(sectionData.mainImage, assetCache),
-          ...sectionData.rows.flatMap((row) => [
-            fetchAssetAsDataUrl(row.homeTeamLogo, assetCache),
-            fetchAssetAsDataUrl(row.awayTeamLogo, assetCache),
-          ]),
-        ])
-
-        const logoPairAt = (rowIndex: number) => ({
-          home: rowLogoHrefs[rowIndex * 2] ?? "",
-          away: rowLogoHrefs[rowIndex * 2 + 1] ?? "",
-        })
-
-        const childrenHeights = [
-          ...(sectionData.title ? [topDateHeight] : []),
-          ...sectionData.rows.flatMap((row) => row.dateHeader ? [inlineDateHeight, rowH] : [rowH]),
-        ]
-        const totalContentHeight = childrenHeights.reduce((sum, itemHeight) => sum + itemHeight, 0) + rowGap * Math.max(0, childrenHeights.length - 1)
-        let cursorY = centerShortLayouts ? sectionY + (CANVAS_H - totalContentHeight) / 2 : sectionY
-        const rightCenterX = LEFT_W + RIGHT_W / 2
-
-        let body = `<g clip-path="url(#${sectionClipId})">`
-        body += `<rect x="0" y="${sectionY}" width="${CANVAS_W}" height="${CANVAS_H}" fill="#000000" />`
-        body += `<rect x="0" y="${sectionY}" width="${LEFT_W}" height="${CANVAS_H}" fill="#050505" />`
-
-        if (leftMainImageHref) {
-          const leftCx = LEFT_W / 2
-          const leftCy = sectionY + CANVAS_H / 2
-          body += `<g clip-path="url(#${leftClipId})" transform="translate(${leftCx + imageTransform.x} ${leftCy + imageTransform.y}) scale(${imageTransform.scale}) translate(${-leftCx} ${-sectionY - CANVAS_H / 2})">`
-          body += `<image x="0" y="${sectionY}" width="${LEFT_W}" height="${CANVAS_H}" preserveAspectRatio="xMidYMid slice" href="${leftMainImageHref}" xlink:href="${leftMainImageHref}" />`
-          body += `</g>`
-        }
-
-        if (leagueLogoHref) {
-          body += `<image x="24" y="${sectionY + 26}" width="${leagueLogoMaxWidth}" height="${leagueLogoHeight}" preserveAspectRatio="xMinYMin meet" href="${leagueLogoHref}" xlink:href="${leagueLogoHref}" />`
-        }
-
-        body += `<rect x="${LEFT_W}" y="${sectionY}" width="${RIGHT_W}" height="${CANVAS_H}" fill="${escapeSvgText(theme.dark)}" />`
-        if (rightBackgroundHref) {
-          body += `<image x="${LEFT_W}" y="${sectionY}" width="${RIGHT_W}" height="${CANVAS_H}" preserveAspectRatio="none" href="${rightBackgroundHref}" xlink:href="${rightBackgroundHref}" />`
-        }
-
-        const renderLogoBox = (x: number, y: number, href: string) => {
-          let box = `<rect x="${x}" y="${y}" width="${finalLogoBoxSize}" height="${finalLogoBoxSize}" fill="#ffffff" />`
-          if (href) {
-            box += `<image x="${x + (finalLogoBoxSize - logoSize) / 2}" y="${y + (finalLogoBoxSize - logoSize) / 2}" width="${logoSize}" height="${logoSize}" preserveAspectRatio="xMidYMid meet" href="${href}" xlink:href="${href}" />`
-          } else {
-            box += `<rect x="${x + (finalLogoBoxSize - logoSize) / 2}" y="${y + (finalLogoBoxSize - logoSize) / 2}" width="${logoSize}" height="${logoSize}" rx="10" ry="10" fill="#e5e7eb" />`
-          }
-          return box
-        }
-
-        const renderDateText = (text: string, y: number, translateY: number) =>
-          `<text x="${rightCenterX}" y="${y + inlineDateHeight / 2 + translateY}" text-anchor="middle" dominant-baseline="middle" fill="${theme.dateTextColor}" ${SVG_EXPORT_TEXT_ATTRS} font-size="${INLINE_DATE_FONT_SIZE}" font-weight="700">${escapeSvgText(text)}</text>`
-
-        if (sectionData.title) {
-          body += renderDateText(sectionData.title, cursorY, centerShortLayouts ? 20 : 20)
-          cursorY += inlineDateHeight + rowGap
-        }
-
-        sectionData.rows.forEach((row, rowIndex) => {
-          if (row.dateHeader) {
-            body += renderDateText(row.dateHeader, cursorY, 20)
-            cursorY += inlineDateHeight + rowGap
-          }
-
-          const rowY = cursorY
-          const boxY = rowY + (rowH - finalLogoBoxSize) / 2
-          const currentBandY = rowY + (rowH - bandHeight) / 2
-          const logos = logoPairAt(rowIndex)
-
-          body += renderLogoBox(rowBoxX, boxY, logos.home)
-          body += renderLogoBox(awayBoxX, boxY, logos.away)
-          body += `<rect x="${bandX}" y="${currentBandY}" width="${bandWidth}" height="${bandHeight}" fill="${bandFill}" />`
-
-          if (renderTeamsLayout) {
-            const segmentWidth = (bandWidth - 4) / 3
-            const dividerColor = dividerSvgColor(theme.textColor)
-            const nameLines = (name: string) => {
-              const words = renderTeamsLayout && rowCount <= 5 ? name.trim().split(/\s+/).filter(Boolean) : []
-              if (!(renderTeamsLayout && rowCount <= 5) || !shouldSplitTeamWords(words)) return [name]
-              return words.length >= 3 ? [words.slice(0, 2).join(" "), words.slice(2).join(" ")] : [words[0], words.slice(1).join(" ")]
-            }
-            const homeLines = nameLines(row.homeTeam)
-            const awayLines = nameLines(row.awayTeam)
-            const homeCenterX = bandX + segmentWidth / 2
-            const timeCenterX = bandX + segmentWidth + 2 + segmentWidth / 2
-            const awayCenterX = bandX + (segmentWidth + 2) * 2 + segmentWidth / 2
-            const homeStartY = currentBandY + (isCompactTeamsLayout ? 34 + (homeLines.length === 1 && row.homeTeam.trim().length <= 12 ? 12 : 0) + 8 : bandHeight / 2 - bandHeight * 0.07)
-            const awayStartY = currentBandY + (isCompactTeamsLayout ? 34 + (awayLines.length === 1 && row.awayTeam.trim().length <= 12 ? 12 : 0) + 8 : bandHeight / 2 - bandHeight * 0.07)
-            const timeY = currentBandY + (isCompactTeamsLayout ? 70 : bandHeight / 2 + bandHeight * 0.25)
-
-            body += `<rect x="${bandX + segmentWidth}" y="${currentBandY + bandHeight * 0.12}" width="2" height="${bandHeight * 0.76}" fill="${dividerColor}" />`
-            body += `<rect x="${bandX + segmentWidth + 2 + segmentWidth}" y="${currentBandY + bandHeight * 0.12}" width="2" height="${bandHeight * 0.76}" fill="${dividerColor}" />`
-            body += renderMultilineText(homeLines, homeCenterX, homeStartY, bandNameFz, theme.textColor, 400)
-            body += renderMultilineText(awayLines, awayCenterX, awayStartY, bandNameFz, theme.textColor, 400)
-            body += `<text x="${timeCenterX}" y="${timeY}" text-anchor="middle" dominant-baseline="${isCompactTeamsLayout ? "middle" : "middle"}" fill="${theme.textColor}" ${SVG_EXPORT_TEXT_ATTRS} font-size="${centeredTimeFz}" font-weight="700">${escapeSvgText(row.col2 || row.col1 || row.col3 || "--:--")}</text>`
-          } else {
-            const columns = [
-              { label: sectionData.col1Label, value: row.col1 },
-              { label: sectionData.col2Label, value: row.col2 },
-              ...(sectionData.showCol3 ? [{ label: sectionData.col3Label, value: row.col3 }] : []),
-            ]
-            const colWidth = (bandWidth - (columns.length - 1) * 2) / columns.length
-            const dividerColor = dividerSvgColor(theme.textColor)
-
-            columns.forEach((column, columnIndex) => {
-              const colX = bandX + columnIndex * (colWidth + 2)
-              const centerX = colX + colWidth / 2
-              const labelY = currentBandY + bandHeight * (isFiveMatchLayout ? 0.24 : centerShortLayouts ? 0.24 : 0.2)
-              const valueY = currentBandY + bandHeight * (isFiveMatchLayout ? 0.76 : centerShortLayouts ? 0.77 : 0.68)
-              body += `<text x="${centerX}" y="${labelY}" text-anchor="middle" dominant-baseline="middle" fill="${theme.textColor}" ${SVG_EXPORT_TEXT_ATTRS} font-size="${labelFz}" font-weight="400">${escapeSvgText(column.label.toUpperCase())}</text>`
-              body += `<text x="${centerX}" y="${valueY}" text-anchor="middle" dominant-baseline="middle" fill="${theme.textColor}" ${SVG_EXPORT_TEXT_ATTRS} font-size="${timeFz}" font-weight="700">${escapeSvgText(column.value || "--:--")}</text>`
-              if (columnIndex < columns.length - 1) {
-                body += `<rect x="${colX + colWidth}" y="${currentBandY + bandHeight * 0.12}" width="2" height="${bandHeight * 0.76}" fill="${dividerColor}" />`
-              }
-            })
-          }
-
-          cursorY += rowH + rowGap
-        })
-
-        body += `</g>`
-        return body
-      }
-
-      const bodies = await Promise.all(graphicSections.map((section, index) => renderSection(section, index)))
-      const svgStr = `<?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" version="1.1" width="${CANVAS_W}" height="${compositeHeight}" viewBox="0 0 ${CANVAS_W} ${compositeHeight}">
-  <defs>${defs.join("")}</defs>
-  ${bodies.join("")}
-</svg>`
-      const blob   = new Blob([svgStr], { type: "image/svg+xml;charset=utf-8" })
-      const url    = URL.createObjectURL(blob)
-      const link   = document.createElement("a")
-      link.href     = url
+      const svgStr = await buildGraphicSvgString()
+      if (!svgStr) return
+      const blob = new Blob([svgStr], { type: "image/svg+xml;charset=utf-8" })
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement("a")
+      link.href = url
       link.download = `fixture-${slugify(data.league)}-${Date.now()}.svg`
       link.click()
-      URL.revokeObjectURL(url)
+      setTimeout(() => URL.revokeObjectURL(url), 0)
     } catch (err) {
       console.error("SVG export error", err)
       alert("Error al exportar SVG. Revisá la consola para más detalles.")
-    } finally { setExporting(null) }
-  }, [compositeHeight, data.league, graphicSections])
+    } finally {
+      setExporting(null)
+    }
+  }, [buildGraphicSvgString, data.league])
 
   const isDraggingImg = !!dragRef.current
 
@@ -1538,7 +1942,7 @@ export default function GraphicFixtureTab({
           <div className="flex items-center justify-between flex-wrap gap-2">
             <div className="flex items-center gap-2">
               <LayoutTemplate className="h-5 w-5 text-primary" />
-              <CardTitle>Fixture Gráfico</CardTitle>
+              <CardTitle>Gráficos</CardTitle>
               <span className="text-xs text-gray-400 font-normal">
                 {CANVAS_W} × {CANVAS_H} px
               </span>
@@ -1592,20 +1996,83 @@ export default function GraphicFixtureTab({
             </div>
 
             {/* Drag/zoom interaction overlay */}
-            <div
-              style={{
-                position: "absolute",
-                top: 0, left: 0,
-                width: Math.round(LEFT_W * previewScale),
-                height: Math.round(compositeHeight * previewScale),
-                cursor: activeMainImage
-                  ? (dragRef.current ? "grabbing" : "grab")
-                  : "default",
-                zIndex: 10,
-              }}
-              onMouseDown={onImgMouseDown}
-              onWheel={onImgWheel}
-            />
+            {activeMainImage ? (
+              <div
+                style={{
+                  position: "absolute",
+                  top: 0, left: 0,
+                  width: Math.round(LEFT_W * previewScale),
+                  height: Math.round(compositeHeight * previewScale),
+                  cursor: dragRef.current ? "grabbing" : "grab",
+                  zIndex: 10,
+                }}
+                onMouseDown={onImgMouseDown}
+                onWheel={onImgWheel}
+                onDragOver={onPreviewDragOver}
+                onDragLeave={onPreviewDragLeave}
+                onDrop={onDrop}
+              />
+            ) : (
+              <button
+                type="button"
+                aria-label={`Agregar imagen a la zona negra de ${data.league}`}
+                onClick={openMainImagePicker}
+                onDragOver={onPreviewDragOver}
+                onDragLeave={onPreviewDragLeave}
+                onDrop={onDrop}
+                style={{
+                  position: "absolute",
+                  top: 0,
+                  left: 0,
+                  width: Math.round(LEFT_W * previewScale),
+                  height: Math.round(compositeHeight * previewScale),
+                  zIndex: 10,
+                  border: 0,
+                  background: isDragging ? "rgba(255,255,255,0.03)" : "transparent",
+                  color: "#fff",
+                  cursor: "copy",
+                  padding: 0,
+                  margin: 0,
+                  appearance: "none",
+                  WebkitAppearance: "none",
+                }}
+              >
+                <div
+                  style={{
+                    position: "absolute",
+                    inset: 0,
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    padding: 24,
+                    boxSizing: "border-box",
+                  }}
+                >
+                  <div
+                    style={{
+                      maxWidth: 300,
+                      width: "100%",
+                      borderRadius: 18,
+                      border: `1px dashed ${isDragging ? "rgba(255,255,255,0.35)" : "rgba(255,255,255,0.16)"}`,
+                      background: "rgba(0,0,0,0.42)",
+                      backdropFilter: "blur(6px)",
+                      WebkitBackdropFilter: "blur(6px)",
+                      padding: "18px 16px",
+                      textAlign: "center",
+                      boxShadow: "0 16px 40px rgba(0,0,0,0.25)",
+                    }}
+                  >
+                    <Upload className="mx-auto h-8 w-8 text-white/70" />
+                    <div style={{ marginTop: 10, fontSize: 16, fontWeight: 700, lineHeight: 1.15 }}>
+                      Soltá la imagen en la zona negra
+                    </div>
+                    <div style={{ marginTop: 6, fontSize: 11, color: "rgba(255,255,255,0.72)", lineHeight: 1.35 }}>
+                      O hacé click para elegir un archivo y luego ajustarlo con zoom.
+                    </div>
+                  </div>
+                </div>
+              </button>
+            )}
 
             {/* Hint tooltip on left panel */}
             {activeMainImage && (
@@ -1639,7 +2106,7 @@ export default function GraphicFixtureTab({
                 <Select value={data.league} onValueChange={(v) => setField("league", v)}>
                   <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    {LEAGUES.map((l) => <SelectItem key={l} value={l}>{l}</SelectItem>)}
+                    {visibleLeagueOptions.map((l) => <SelectItem key={l} value={l}>{l}</SelectItem>)}
                   </SelectContent>
                 </Select>
                 <p className="text-[10px] text-gray-400 mt-1 font-mono">
@@ -1702,30 +2169,107 @@ export default function GraphicFixtureTab({
                   <Label className="text-xs">Nombres de equipos</Label>
                   <Switch checked={data.showTeamNames} onCheckedChange={(v) => setField("showTeamNames", v)} />
                 </div>
+                {activeBaseAssets.whiteLogo && (
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="min-w-0">
+                      <Label className="text-xs">Logo liga blanco</Label>
+                      <p className="text-[10px] text-gray-400">
+                        Usa la versión clara para esta liga.
+                      </p>
+                    </div>
+                    <Switch
+                      checked={activeUsesWhiteLogo}
+                      onCheckedChange={(checked) => {
+                        setLeagueLogoVariants((prev) => ({ ...prev, [data.league]: checked }))
+                      }}
+                    />
+                  </div>
+                )}
               </div>
 
               <div className="space-y-2 pt-1 border-t">
                 <Label className="text-xs text-gray-500 uppercase tracking-wide">Orden del preview</Label>
-                <div className="space-y-1.5">
+                <p className="mt-0.5 text-[10px] text-gray-400">Arrastrá cada liga con la manija para reordenarla.</p>
+                <div
+                  className="space-y-1.5"
+                  onDragOver={(e) => {
+                    if (!draggedPreviewLeague) return
+                    e.preventDefault()
+                    e.dataTransfer.dropEffect = "move"
+                    setPreviewDropTarget(null)
+                  }}
+                  onDrop={(e) => {
+                    e.preventDefault()
+                    const sourceLeague = draggedPreviewLeague ?? e.dataTransfer.getData("text/plain")
+                    if (!sourceLeague) return
+                    moveLeagueToEnd(sourceLeague)
+                    setDraggedPreviewLeague(null)
+                    setPreviewDropTarget(null)
+                  }}
+                >
                   {selectedLeagues.map((league, index) => (
-                    <div key={`${league}-${index}`} className="flex items-center gap-2 rounded-md border bg-slate-50 px-2 py-1.5">
+                    <div
+                      key={`${league}-${index}`}
+                      className={`relative flex items-center gap-2 rounded-md border bg-slate-50 px-2 py-1.5 transition-colors ${
+                        draggedPreviewLeague === league ? "opacity-50" : ""
+                      } ${
+                        previewDropTarget?.league === league
+                          ? "border-primary/50 bg-primary/5"
+                          : ""
+                      }`}
+                      onDragOver={(e) => {
+                        if (!draggedPreviewLeague || draggedPreviewLeague === league) return
+                        e.preventDefault()
+                        e.stopPropagation()
+                        e.dataTransfer.dropEffect = "move"
+                        const rect = e.currentTarget.getBoundingClientRect()
+                        const position = e.clientY < rect.top + rect.height / 2 ? "before" : "after"
+                        setPreviewDropTarget({ league, position })
+                      }}
+                      onDrop={(e) => {
+                        e.preventDefault()
+                        e.stopPropagation()
+                        const sourceLeague = draggedPreviewLeague ?? e.dataTransfer.getData("text/plain")
+                        if (!sourceLeague || sourceLeague === league) {
+                          setDraggedPreviewLeague(null)
+                          setPreviewDropTarget(null)
+                          return
+                        }
+
+                        const rect = e.currentTarget.getBoundingClientRect()
+                        const position = e.clientY < rect.top + rect.height / 2 ? "before" : "after"
+                        moveLeagueRelative(sourceLeague, league, position)
+                        setDraggedPreviewLeague(null)
+                        setPreviewDropTarget(null)
+                      }}
+                    >
+                      {previewDropTarget?.league === league && previewDropTarget.position === "before" && (
+                        <div className="absolute left-2 right-2 top-0 h-0.5 rounded-full bg-primary" />
+                      )}
+                      {previewDropTarget?.league === league && previewDropTarget.position === "after" && (
+                        <div className="absolute left-2 right-2 bottom-0 h-0.5 rounded-full bg-primary" />
+                      )}
+                      <button
+                        type="button"
+                        draggable={selectedLeagues.length > 1}
+                        className="cursor-grab touch-none text-slate-400 hover:text-slate-700 active:cursor-grabbing disabled:cursor-default disabled:opacity-30"
+                        onDragStart={(e) => {
+                          e.dataTransfer.effectAllowed = "move"
+                          e.dataTransfer.setData("text/plain", league)
+                          setDraggedPreviewLeague(league)
+                          setPreviewDropTarget(null)
+                        }}
+                        onDragEnd={() => {
+                          setDraggedPreviewLeague(null)
+                          setPreviewDropTarget(null)
+                        }}
+                        title="Arrastrar para reordenar"
+                        aria-label={`Arrastrar ${league}`}
+                        disabled={selectedLeagues.length <= 1}
+                      >
+                        <GripVertical className="h-4 w-4" />
+                      </button>
                       <div className="min-w-0 flex-1 truncate text-xs font-medium">{league}</div>
-                      <button
-                        type="button"
-                        className="text-slate-400 hover:text-slate-700 disabled:opacity-30"
-                        onClick={() => moveLeagueInPreview(index, -1)}
-                        disabled={index === 0}
-                      >
-                        <ChevronUp className="h-3.5 w-3.5" />
-                      </button>
-                      <button
-                        type="button"
-                        className="text-slate-400 hover:text-slate-700 disabled:opacity-30"
-                        onClick={() => moveLeagueInPreview(index, 1)}
-                        disabled={index === selectedLeagues.length - 1}
-                      >
-                        <ChevronDown className="h-3.5 w-3.5" />
-                      </button>
                       <button
                         type="button"
                         className="text-slate-400 hover:text-red-600 disabled:opacity-30"
@@ -1748,7 +2292,7 @@ export default function GraphicFixtureTab({
             <CardHeader className="pb-3">
               <CardTitle className="text-sm">Imagen de {data.league}</CardTitle>
               <CardDescription className="text-xs">
-                Cada liga guarda su propia imagen. Arrastrá o hacé click y ajustá zoom solo para la liga seleccionada.
+                Cada liga guarda su propia imagen. Podés soltarla en la zona negra, hacer click ahí o usar este selector, y luego ajustar zoom solo para la liga seleccionada.
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-3">
@@ -1901,32 +2445,6 @@ export default function GraphicFixtureTab({
         </CardContent>
       </Card>
 
-      <div
-        aria-hidden
-        style={{
-          position: "fixed",
-          top: -10000,
-          left: -10000,
-          width: CANVAS_W,
-          height: compositeHeight,
-          overflow: "visible",
-          pointerEvents: "none",
-          opacity: 0,
-          zIndex: -1,
-        }}
-      >
-        <div
-          ref={exportDivRef}
-          style={{
-            width: CANVAS_W,
-            height: compositeHeight,
-            borderRadius: CANVAS_RADIUS,
-            overflow: "hidden",
-          }}
-        >
-          <GfxCompositeCanvas sections={graphicSections} />
-        </div>
-      </div>
     </div>
   )
 }

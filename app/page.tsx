@@ -14,11 +14,12 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { ToastAction } from "@/components/ui/toast"
 import { Upload, Download, Edit, Trash, ChevronDown, Palette, Calendar, Users, Trophy, Settings, LayoutTemplate } from "lucide-react"
-import GraphicFixtureTab from "@/components/GraphicFixtureTab"
+import GraphicFixtureTab, { GRAPHIC_STATE_STORAGE_KEY } from "@/components/GraphicFixtureTab"
 import { useToast } from "@/hooks/use-toast"
 import html2canvas from "html2canvas"
 import JSZip from "jszip"
 import { elementToSVG, inlineResources } from "dom-to-svg"
+import { inferLeagueNameFromPath, resolveTeamNameAlias } from "@/utils/team-aliases"
 
 interface Team {
   id: string
@@ -33,6 +34,11 @@ const normalizeTeamName = (name: string) =>
     .replace(/[\u0300-\u036f]/g, "")
     .replace(/[^a-z0-9]/gi, "")
     .toLowerCase()
+
+const FIXTURE_LAYOUT_VERSION = 2
+const FIXTURE_OFFSET_SCALE = 0.7
+
+const scaleFixtureOffset = (offset: number) => Math.round(offset * FIXTURE_OFFSET_SCALE)
 
 const LEAGUE_IMPORT_ALIASES: Record<string, string> = {
   u: "U22",
@@ -170,6 +176,8 @@ const PREDEFINED_LEAGUES: League[] = [
   { name: "Liga Dos", color: "#929292" },
   { name: "Libo", color: "#008E00" },
   { name: "Liga Ecuador", color: "#FFE000" },
+  { name: "Ecuador Femenino", color: "#ff40ff" },
+  { name: "Liga Nacional Femenina Chile", color: "#002244" },
   { name: "Italia", color: "#B70821" },
   { name: "Proximo", color: "#263B00" },
 ]
@@ -319,10 +327,10 @@ export default function Home() {
   const { toast } = useToast()
 
   // Reemplazar la línea del estado timeBlockOffset con estos dos estados separados
-  const [timeBlockOffset, setTimeBlockOffset] = useState(-35) // Offset vertical para el bloque de horarios (valor negativo para subir)
-  const [timeBlockOffsetInput, setTimeBlockOffsetInput] = useState(-35)
-  const [countryLabelOffset, setCountryLabelOffset] = useState(-35) // Offset vertical para las etiquetas de países
-  const [countryLabelOffsetInput, setCountryLabelOffsetInput] = useState(-35)
+  const [timeBlockOffset, setTimeBlockOffset] = useState(scaleFixtureOffset(-35)) // Offset vertical para el bloque de horarios (valor negativo para subir)
+  const [timeBlockOffsetInput, setTimeBlockOffsetInput] = useState(scaleFixtureOffset(-35))
+  const [countryLabelOffset, setCountryLabelOffset] = useState(scaleFixtureOffset(-35)) // Offset vertical para las etiquetas de países
+  const [countryLabelOffsetInput, setCountryLabelOffsetInput] = useState(scaleFixtureOffset(-35))
   const [editingLeague, setEditingLeague] = useState<League | null>(null)
 
   // Añadir estado para el equipo en edición
@@ -337,8 +345,8 @@ export default function Home() {
   // Añadir estos nuevos estados después de los estados existentes
   const [teamNamesFontSize, setTeamNamesFontSize] = useState<number>(20)
   const [teamNamesFontSizeInput, setTeamNamesFontSizeInput] = useState<number>(20)
-  const [teamNamesOffset, setTeamNamesOffset] = useState<number>(-45) // Offset vertical para los nombres de equipos
-  const [teamNamesOffsetInput, setTeamNamesOffsetInput] = useState<number>(-45)
+  const [teamNamesOffset, setTeamNamesOffset] = useState<number>(scaleFixtureOffset(-45)) // Offset vertical para los nombres de equipos
+  const [teamNamesOffsetInput, setTeamNamesOffsetInput] = useState<number>(scaleFixtureOffset(-45))
 
   // Añadir el estado y control para horizontalTimeOffset
   const [horizontalTimeOffset, setHorizontalTimeOffset] = useState<number>(0) // Offset horizontal para el bloque de horarios
@@ -523,6 +531,15 @@ export default function Home() {
         }
       }
 
+      const layoutVersion = typeof session.layoutVersion === "number" ? session.layoutVersion : 0
+      const shouldMigrateFixtureOffsets = layoutVersion < FIXTURE_LAYOUT_VERSION
+      const readFixtureOffset = (value: unknown, fallback: number) => {
+        if (typeof value !== "number") {
+          return fallback
+        }
+        return shouldMigrateFixtureOffsets ? scaleFixtureOffset(value) : value
+      }
+
       if (Array.isArray(session.fixtures)) {
         setFixtures(session.fixtures)
       }
@@ -539,16 +556,16 @@ export default function Home() {
         setTimeZones(normalizeTimeZones(session.timeZones))
       }
 
-      apply(session.timeBlockOffset, setTimeBlockOffset)
-      apply(session.timeBlockOffsetInput, setTimeBlockOffsetInput)
-      apply(session.countryLabelOffset, setCountryLabelOffset)
-      apply(session.countryLabelOffsetInput, setCountryLabelOffsetInput)
+      setTimeBlockOffset(readFixtureOffset(session.timeBlockOffset, scaleFixtureOffset(-35)))
+      setTimeBlockOffsetInput(readFixtureOffset(session.timeBlockOffsetInput, scaleFixtureOffset(-35)))
+      setCountryLabelOffset(readFixtureOffset(session.countryLabelOffset, scaleFixtureOffset(-35)))
+      setCountryLabelOffsetInput(readFixtureOffset(session.countryLabelOffsetInput, scaleFixtureOffset(-35)))
       apply(session.showTeamNames, setShowTeamNames)
       apply(session.preset, setPreset)
       apply(session.teamNamesFontSize, setTeamNamesFontSize)
       apply(session.teamNamesFontSizeInput, setTeamNamesFontSizeInput)
-      apply(session.teamNamesOffset, setTeamNamesOffset)
-      apply(session.teamNamesOffsetInput, setTeamNamesOffsetInput)
+      setTeamNamesOffset(readFixtureOffset(session.teamNamesOffset, scaleFixtureOffset(-45)))
+      setTeamNamesOffsetInput(readFixtureOffset(session.teamNamesOffsetInput, scaleFixtureOffset(-45)))
       if (session.exportHorario !== undefined || Array.isArray(session.timeZones)) {
         setExportHorario(normalizeExportHorario(session.exportHorario, session.timeZones))
       }
@@ -805,9 +822,11 @@ export default function Home() {
 
         const logoMap = new Map<string, { url: string; displayName: string }>()
         for (const logo of logos) {
-          const key = normalizeTeamName(logo.baseName || "")
+          const inferredLeague = inferLeagueNameFromPath(logo.relativePath)
+          const rawDisplayName = (logo.baseName || "").replace(/[_-]+/g, " ").trim().normalize("NFC")
+          const displayName = resolveTeamNameAlias(rawDisplayName, inferredLeague)
+          const key = normalizeTeamName(displayName)
           if (!key) continue
-          const displayName = (logo.baseName || "").replace(/[_-]+/g, " ").trim()
           const fileQuery = logo.relativePath ? `path=${encodeURIComponent(logo.relativePath)}` : `name=${encodeURIComponent(logo.fileName)}`
           logoMap.set(key, {
             url: `/api/local-logos/file?${fileQuery}`,
@@ -821,9 +840,11 @@ export default function Home() {
         }
 
         setTeams((prev) => {
-          const existingKeys = new Set(prev.map((team) => normalizeTeamName(team.name)))
+          const existingKeys = new Set(
+            prev.map((team) => normalizeTeamName(resolveTeamNameAlias(team.name, team.league))),
+          )
           const next = prev.map((team) => {
-            const key = normalizeTeamName(team.name)
+            const key = normalizeTeamName(resolveTeamNameAlias(team.name, team.league))
             const match = logoMap.get(key)
             if (!match || !isPlaceholderLogo(team.logo)) return team
             return { ...team, logo: match.url }
@@ -850,7 +871,7 @@ export default function Home() {
         setFixtures((prev) =>
           prev.map((fixture) => {
             const updateTeam = (team: Team) => {
-              const key = normalizeTeamName(team.name)
+              const key = normalizeTeamName(resolveTeamNameAlias(team.name, team.league))
               const match = logoMap.get(key)
               if (!match || !isPlaceholderLogo(team.logo)) return team
               return { ...team, logo: match.url }
@@ -902,6 +923,7 @@ export default function Home() {
 
   const sessionData = useMemo(
     () => ({
+      layoutVersion: FIXTURE_LAYOUT_VERSION,
       fixtures,
       teams,
       leagues,
@@ -1165,7 +1187,7 @@ export default function Home() {
     let cancelled = false
 
     const run = async () => {
-      await loadLocalLogos({ seedIfEmpty: true })
+      await loadLocalLogos({ seedIfEmpty: true, addMissing: true })
       if (!cancelled) {
         setAutoLogosLoaded(true)
       }
@@ -1279,12 +1301,12 @@ export default function Home() {
     setCompactDateBlockGap(0)
     setCompactInterDateGap(-21)
 
-    setTimeBlockOffset(-90)
-    setTimeBlockOffsetInput(-90)
-    setCountryLabelOffset(-24)
-    setCountryLabelOffsetInput(-24)
-    setTeamNamesOffset(-55)
-    setTeamNamesOffsetInput(-55)
+    setTimeBlockOffset(scaleFixtureOffset(-90))
+    setTimeBlockOffsetInput(scaleFixtureOffset(-90))
+    setCountryLabelOffset(scaleFixtureOffset(-24))
+    setCountryLabelOffsetInput(scaleFixtureOffset(-24))
+    setTeamNamesOffset(scaleFixtureOffset(-55))
+    setTeamNamesOffsetInput(scaleFixtureOffset(-55))
     setTeamNamesFontSize(25)
     setTeamNamesFontSizeInput(25)
     setTimesFontSize(55)
@@ -1315,9 +1337,9 @@ export default function Home() {
       compactDateFontScale === 0.7 &&
       compactDateBlockGap === -8 &&
       compactInterDateGap === -21 &&
-      timeBlockOffset === -90 &&
-      countryLabelOffset === -24 &&
-      teamNamesOffset === -55 &&
+      timeBlockOffset === scaleFixtureOffset(-90) &&
+      countryLabelOffset === scaleFixtureOffset(-24) &&
+      teamNamesOffset === scaleFixtureOffset(-55) &&
       teamNamesFontSize === 25 &&
       timesFontSize === 55 &&
       fixtureDateFontSize === 125 &&
@@ -1464,7 +1486,7 @@ export default function Home() {
     files.forEach((file) => {
       const fileName = file.name
       // Extraer el nombre del equipo del nombre del archivo (sin extensión)
-      const teamName = fileName.substring(0, fileName.lastIndexOf(".")) || fileName
+      const teamName = resolveTeamNameAlias(fileName.substring(0, fileName.lastIndexOf(".")) || fileName)
 
       const reader = new FileReader()
       reader.onload = (event) => {
@@ -1638,34 +1660,34 @@ export default function Home() {
         // HOR
         if (!nextShowTeamNames) {
           setShowTimeLabels(true)
-          setTimeBlockOffset(-33)
-          setTimeBlockOffsetInput(-33)
-          ctxSetCompactTimeBlockOffset(-33)
-          ctxSetCompactTimeBlockOffsetInput(-33)
+          setTimeBlockOffset(scaleFixtureOffset(-33))
+          setTimeBlockOffsetInput(scaleFixtureOffset(-33))
+          ctxSetCompactTimeBlockOffset(scaleFixtureOffset(-33))
+          ctxSetCompactTimeBlockOffsetInput(scaleFixtureOffset(-33))
 
-          setCountryLabelOffset(-33)
-          setCountryLabelOffsetInput(-33)
+          setCountryLabelOffset(scaleFixtureOffset(-33))
+          setCountryLabelOffsetInput(scaleFixtureOffset(-33))
 
-          setTeamNamesOffset(-43)
-          setTeamNamesOffsetInput(-43)
-          ctxSetCompactTeamNamesOffset(-43)
-          ctxSetCompactTeamNamesOffsetInput(-43)
+          setTeamNamesOffset(scaleFixtureOffset(-43))
+          setTeamNamesOffsetInput(scaleFixtureOffset(-43))
+          ctxSetCompactTeamNamesOffset(scaleFixtureOffset(-43))
+          ctxSetCompactTeamNamesOffsetInput(scaleFixtureOffset(-43))
           return
         }
 
         // NOM
-        setTimeBlockOffset(-65)
-        setTimeBlockOffsetInput(-65)
-        ctxSetCompactTimeBlockOffset(-65)
-        ctxSetCompactTimeBlockOffsetInput(-65)
+        setTimeBlockOffset(scaleFixtureOffset(-65))
+        setTimeBlockOffsetInput(scaleFixtureOffset(-65))
+        ctxSetCompactTimeBlockOffset(scaleFixtureOffset(-65))
+        ctxSetCompactTimeBlockOffsetInput(scaleFixtureOffset(-65))
 
-        setCountryLabelOffset(-35)
-        setCountryLabelOffsetInput(-35)
+        setCountryLabelOffset(scaleFixtureOffset(-35))
+        setCountryLabelOffsetInput(scaleFixtureOffset(-35))
 
-        setTeamNamesOffset(-38)
-        setTeamNamesOffsetInput(-38)
-        ctxSetCompactTeamNamesOffset(-38)
-        ctxSetCompactTeamNamesOffsetInput(-38)
+        setTeamNamesOffset(scaleFixtureOffset(-38))
+        setTeamNamesOffsetInput(scaleFixtureOffset(-38))
+        ctxSetCompactTeamNamesOffset(scaleFixtureOffset(-38))
+        ctxSetCompactTeamNamesOffsetInput(scaleFixtureOffset(-38))
         return
       }
 
@@ -1705,22 +1727,23 @@ export default function Home() {
         // HOR
         if (!nextShowTeamNames) {
           setShowTimeLabels(true)
-          setTimeBlockOffset(-40)
-          setTimeBlockOffsetInput(-40)
-          setCountryLabelOffset(-40)
-          setCountryLabelOffsetInput(-40)
-          setTeamNamesOffset(-43)
-          setTeamNamesOffsetInput(-43)
+          const fiveFixturesHorOffset = Math.round(scaleFixtureOffset(-40) * 0.93)
+          setTimeBlockOffset(fiveFixturesHorOffset)
+          setTimeBlockOffsetInput(fiveFixturesHorOffset)
+          setCountryLabelOffset(fiveFixturesHorOffset)
+          setCountryLabelOffsetInput(fiveFixturesHorOffset)
+          setTeamNamesOffset(scaleFixtureOffset(-43))
+          setTeamNamesOffsetInput(scaleFixtureOffset(-43))
           return
         }
 
         // NOM
-        setTimeBlockOffset(-84)
-        setTimeBlockOffsetInput(-84)
-        setCountryLabelOffset(-45)
-        setCountryLabelOffsetInput(-45)
-        setTeamNamesOffset(-50)
-        setTeamNamesOffsetInput(-50)
+        setTimeBlockOffset(scaleFixtureOffset(-84))
+        setTimeBlockOffsetInput(scaleFixtureOffset(-84))
+        setCountryLabelOffset(scaleFixtureOffset(-45))
+        setCountryLabelOffsetInput(scaleFixtureOffset(-45))
+        setTeamNamesOffset(scaleFixtureOffset(-50))
+        setTeamNamesOffsetInput(scaleFixtureOffset(-50))
         return
       }
 
@@ -1746,18 +1769,18 @@ export default function Home() {
         setFixtureMarginBottom(0)
         setFixtureMarginBottomInput(0)
 
-        setTimeBlockOffset(-75)
-        setTimeBlockOffsetInput(-75)
-        ctxSetTimeBlockOffset(-75)
-        ctxSetTimeBlockOffsetInput(-75)
+        setTimeBlockOffset(scaleFixtureOffset(-75))
+        setTimeBlockOffsetInput(scaleFixtureOffset(-75))
+        ctxSetTimeBlockOffset(scaleFixtureOffset(-75))
+        ctxSetTimeBlockOffsetInput(scaleFixtureOffset(-75))
 
-        setCountryLabelOffset(-24)
-        setCountryLabelOffsetInput(-24)
+        setCountryLabelOffset(scaleFixtureOffset(-24))
+        setCountryLabelOffsetInput(scaleFixtureOffset(-24))
 
-        setTeamNamesOffset(-45)
-        setTeamNamesOffsetInput(-45)
-        ctxSetTeamNamesOffset(-45)
-        ctxSetTeamNamesOffsetInput(-45)
+        setTeamNamesOffset(scaleFixtureOffset(-45))
+        setTeamNamesOffsetInput(scaleFixtureOffset(-45))
+        ctxSetTeamNamesOffset(scaleFixtureOffset(-45))
+        ctxSetTeamNamesOffsetInput(scaleFixtureOffset(-45))
       } else {
         // Defaults: Compacto 3 (HOR)
         setFixtureDateFontSize(125)
@@ -1779,13 +1802,13 @@ export default function Home() {
         setFixtureMarginBottom(0)
         setFixtureMarginBottomInput(0)
 
-        setTimeBlockOffset(-35)
-        setTimeBlockOffsetInput(-35)
-        ctxSetTimeBlockOffset(-35)
-        ctxSetTimeBlockOffsetInput(-35)
+        setTimeBlockOffset(scaleFixtureOffset(-35))
+        setTimeBlockOffsetInput(scaleFixtureOffset(-35))
+        ctxSetTimeBlockOffset(scaleFixtureOffset(-35))
+        ctxSetTimeBlockOffsetInput(scaleFixtureOffset(-35))
 
-        setCountryLabelOffset(-35)
-        setCountryLabelOffsetInput(-35)
+        setCountryLabelOffset(scaleFixtureOffset(-35))
+        setCountryLabelOffsetInput(scaleFixtureOffset(-35))
       }
     },
     [
@@ -1844,6 +1867,11 @@ export default function Home() {
 
   const selectBlockStyle = useCallback(
     (style: "normal" | "compact" | "five-fixtures" | "two-column") => {
+      if (style === "normal") {
+        setBlockStyle("normal")
+        applyModeViewPreset("normal", showTeamNames)
+        return
+      }
       if (style === "compact") {
         setBlockStyle("compact")
         applyModeViewPreset("compact", showTeamNames)
@@ -1851,15 +1879,13 @@ export default function Home() {
       }
       if (style === "five-fixtures") {
         setBlockStyle("five-fixtures")
-        // Defaults: Compacto 5 Partidos (HOR)
-        applyModeViewPreset("five-fixtures", false)
+        applyModeViewPreset("five-fixtures", showTeamNames)
         return
       }
       if (style === "two-column") {
         setBlockStyle("two-column")
         return
       }
-      setBlockStyle("normal")
     },
     [
       setBlockStyle,
@@ -2154,6 +2180,7 @@ export default function Home() {
     const defaultTime = "20:05"
     const defaultLeague = leagues[0].name
     const leagueColor = leagues.find((l) => l.name === defaultLeague)?.color || "#000000"
+    const defaultDateTextColor = defaultLeague === "U22" ? "black" : "white"
     const defaultDate = new Date()
       .toLocaleDateString("es-ES", { day: "2-digit", month: "2-digit" })
       .replace("/", "-")
@@ -2175,7 +2202,7 @@ export default function Home() {
       league: defaultLeague,
       leagueColor: leagueColor,
       textColor: "white",
-      dateTextColor: "white",
+      dateTextColor: defaultDateTextColor,
       dateFontSize: fixtureDateFontSize,
     }
     setFixtures([...fixtures, newFixture])
@@ -2193,11 +2220,12 @@ export default function Home() {
   // Modificar la función findOrCreateTeam para asegurar que se mantenga la URL del logo
   const findOrCreateTeam = (teamName: string, leagueName: string): Team => {
     const trimmedName = teamName.trim()
-    const normalizedInput = normalizeTeamName(trimmedName)
+    const canonicalInputName = resolveTeamNameAlias(trimmedName, leagueName)
+    const normalizedInput = normalizeTeamName(canonicalInputName)
 
     const candidateData = teams.map((team) => ({
       team,
-      normalized: normalizeTeamName(team.name),
+      normalized: normalizeTeamName(resolveTeamNameAlias(team.name, team.league ?? leagueName)),
     }))
 
     // Coincidencia exacta (normalizada)
@@ -2240,7 +2268,7 @@ export default function Home() {
     }
 
     if (!match) {
-      const baseId = normalizeTeamName(trimmedName) || `team-${Date.now()}`
+      const baseId = normalizeTeamName(canonicalInputName) || `team-${Date.now()}`
       let uniqueId = baseId
       let attempt = 1
       while (teams.some((team) => team.id === uniqueId)) {
@@ -2249,7 +2277,7 @@ export default function Home() {
 
       match = {
         id: uniqueId,
-        name: trimmedName,
+        name: canonicalInputName,
         logo: "/placeholder.svg?height=100&width=100",
         league: leagueName,
       }
@@ -2392,6 +2420,7 @@ export default function Home() {
               ...fixture,
               league: value,
               leagueColor: leagueColor,
+              dateTextColor: value === "U22" ? "black" : fixture.dateTextColor ?? "white",
             }
           } else if (field === "homeTeam") {
             // Si solo se está actualizando el nombre, mantener el logo
@@ -2509,8 +2538,8 @@ export default function Home() {
     const newFixtures: Match[] = []
     const seenFixtureKeys = new Set(
       fixtures.map((fixture) => {
-        const homeKey = normalizeTeamName(fixture.homeTeam.name)
-        const awayKey = normalizeTeamName(fixture.awayTeam.name)
+        const homeKey = normalizeTeamName(resolveTeamNameAlias(fixture.homeTeam.name, fixture.league))
+        const awayKey = normalizeTeamName(resolveTeamNameAlias(fixture.awayTeam.name, fixture.league))
         return `${fixture.league}|${fixture.date}|${fixture.time}|${homeKey}|${awayKey}`.toLowerCase()
       }),
     )
@@ -2571,8 +2600,8 @@ export default function Home() {
           leagues.find((l) => l.name.toLowerCase() === currentLeague.toLowerCase())?.color || "#000000"
 
         const fixtureKey = `${currentLeague}|${day.padStart(2, "0")}-${month}|${time}|${normalizeTeamName(
-          homeTeamName,
-        )}|${normalizeTeamName(awayTeamName)}`.toLowerCase()
+          homeTeam.name,
+        )}|${normalizeTeamName(awayTeam.name)}`.toLowerCase()
         if (seenFixtureKeys.has(fixtureKey)) {
           return
         }
@@ -2589,7 +2618,7 @@ export default function Home() {
           league: currentLeague,
           leagueColor: leagueColor,
           textColor: "white",
-          dateTextColor: "white",
+          dateTextColor: currentLeague.toLowerCase() === "u22" ? "black" : "white",
           dateFontSize: fixtureDateFontSize,
         })
       }
@@ -2971,7 +3000,7 @@ export default function Home() {
               // Serializar DOM a SVG editable
               const rect = (container as HTMLElement).getBoundingClientRect()
               const svgDoc = elementToSVG(container as HTMLElement)
-              const svgEl = svgDoc.documentElement
+              const svgEl = svgDoc.documentElement as unknown as SVGElement
               await inlineResources(svgEl)
               await inlineSvgImageHrefs(svgEl)
               normalizeSvgTextNodes(svgDoc)
@@ -3032,7 +3061,7 @@ export default function Home() {
               // Serializar DOM a SVG editable
               const rectAll = (fixturesContainer as HTMLElement).getBoundingClientRect()
               const svgDocAll = elementToSVG(fixturesContainer as HTMLElement)
-              const svgElAll = svgDocAll.documentElement
+              const svgElAll = svgDocAll.documentElement as unknown as SVGElement
               await inlineResources(svgElAll)
               await inlineSvgImageHrefs(svgElAll)
               normalizeSvgTextNodes(svgDocAll)
@@ -3210,10 +3239,10 @@ export default function Home() {
       setFixtureMarginTopInput(0)
       setFixtureMarginBottom(0)
       setFixtureMarginBottomInput(0)
-      setTimeBlockOffset(-75)
-      setTimeBlockOffsetInput(-75)
-      setCountryLabelOffset(-24)
-      setCountryLabelOffsetInput(-24)
+      setTimeBlockOffset(scaleFixtureOffset(-75))
+      setTimeBlockOffsetInput(scaleFixtureOffset(-75))
+      setCountryLabelOffset(scaleFixtureOffset(-24))
+      setCountryLabelOffsetInput(scaleFixtureOffset(-24))
       setTeamNamesFontSize(20)
       setTeamNamesFontSizeInput(20)
       setTeamNamesOffset(0)
@@ -3258,16 +3287,16 @@ export default function Home() {
 	                <Trophy className="mr-2 h-4 w-4" />
 	                Ligas
 	              </TabsTrigger>
-		              <TabsTrigger value="settings">
-		                <Settings className="mr-2 h-4 w-4" />
-		                Configuración
-		              </TabsTrigger>
-		              <TabsTrigger value="grafico">
-		                <LayoutTemplate className="mr-2 h-4 w-4" />
-		                Fixture Gráfico
-		              </TabsTrigger>
-		            </TabsList>
-		          </div>
+	              <TabsTrigger value="settings">
+	                <Settings className="mr-2 h-4 w-4" />
+	                Configuración
+	              </TabsTrigger>
+	              <TabsTrigger value="graficos">
+	                <LayoutTemplate className="mr-2 h-4 w-4" />
+	                Gráficos
+	              </TabsTrigger>
+	            </TabsList>
+	          </div>
 
 	          <TabsContent value="importar">
 	            <div className="grid gap-6">
@@ -5020,6 +5049,7 @@ Endesa
                       onClick={() => {
                         if (window.confirm("¿Estás seguro de que quieres limpiar la sesión guardada?")) {
                           window.localStorage.removeItem(SESSION_STORAGE_KEY)
+                          window.localStorage.removeItem(GRAPHIC_STATE_STORAGE_KEY)
                           window.location.reload()
                         }
                       }}
@@ -6077,14 +6107,14 @@ Endesa
                       variant="outline"
                       className="h-auto py-4 flex flex-col items-center gap-2 hover:bg-primary/5 hover:border-primary transition-all"
                       onClick={() => {
-                        const timeOffset = blockStyle === "compact" ? -30 : -35
-                        const labelOffset = blockStyle === "compact" ? -30 : -35
+                        const timeOffset = blockStyle === "compact" ? scaleFixtureOffset(-30) : scaleFixtureOffset(-35)
+                        const labelOffset = blockStyle === "compact" ? scaleFixtureOffset(-30) : scaleFixtureOffset(-35)
                         setTimeBlockOffset(timeOffset);
                         setTimeBlockOffsetInput(timeOffset);
                         setCountryLabelOffset(labelOffset);
                         setCountryLabelOffsetInput(labelOffset);
-                        setTeamNamesOffset(-45);
-                        setTeamNamesOffsetInput(-45);
+                        setTeamNamesOffset(scaleFixtureOffset(-45));
+                        setTeamNamesOffsetInput(scaleFixtureOffset(-45));
                         setTeamNamesFontSize(18);
                         setTeamNamesFontSizeInput(18);
                         setTimesFontSize(45);
@@ -6103,12 +6133,12 @@ Endesa
                       variant="outline"
                       className="h-auto py-4 flex flex-col items-center gap-2 hover:bg-primary/5 hover:border-primary transition-all"
                       onClick={() => {
-                        setTimeBlockOffset(-75);
-                        setTimeBlockOffsetInput(-75);
-                        setCountryLabelOffset(-24);
-                        setCountryLabelOffsetInput(-24);
-                        setTeamNamesOffset(-45);
-                        setTeamNamesOffsetInput(-45);
+                        setTimeBlockOffset(scaleFixtureOffset(-75));
+                        setTimeBlockOffsetInput(scaleFixtureOffset(-75));
+                        setCountryLabelOffset(scaleFixtureOffset(-24));
+                        setCountryLabelOffsetInput(scaleFixtureOffset(-24));
+                        setTeamNamesOffset(scaleFixtureOffset(-45));
+                        setTeamNamesOffsetInput(scaleFixtureOffset(-45));
                         setTeamNamesFontSize(18);
                         setTeamNamesFontSizeInput(18);
                         setTimesFontSize(45);
@@ -6830,7 +6860,7 @@ Endesa
 
 	          </TabsContent>
 
-	          <TabsContent value="grafico">
+	          <TabsContent value="graficos">
 	            <GraphicFixtureTab fixturesOverride={fixtures} timeZonesOverride={timeZones} leaguesOverride={leagues} />
 	          </TabsContent>
 	        </Tabs>

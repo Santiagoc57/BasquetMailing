@@ -290,14 +290,14 @@ export const SettingsTab: React.FC = () => {
               variant={preset === "Con HORARIOS" ? "default" : "outline"}
               onClick={() => {
                 setPreset("Con HORARIOS");
-                const timeOffset = blockStyle === "compact" ? -30 : -35;
-                const labelOffset = blockStyle === "compact" ? -30 : -35;
+                const timeOffset = blockStyle === "compact" ? -21 : -24;
+                const labelOffset = blockStyle === "compact" ? -21 : -24;
                 setTimeBlockOffset(timeOffset);
                 setTimeBlockOffsetInput(timeOffset);
                 setCountryLabelOffset(labelOffset);
                 setCountryLabelOffsetInput(labelOffset);
-                setTeamNamesOffset(-45);
-                setTeamNamesOffsetInput(-45);
+                setTeamNamesOffset(-31);
+                setTeamNamesOffsetInput(-31);
                 setTeamNamesFontSize(14);
                 setTeamNamesFontSizeInput(14);
                 setTimesFontSize(14);
