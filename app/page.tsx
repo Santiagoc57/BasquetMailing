@@ -19,6 +19,7 @@ import { useToast } from "@/hooks/use-toast"
 import html2canvas from "html2canvas"
 import JSZip from "jszip"
 import { elementToSVG, inlineResources } from "dom-to-svg"
+import { inferLeagueNameFromPath, resolveTeamNameAlias } from "@/utils/team-aliases"
 
 interface Team {
   id: string
@@ -821,9 +822,11 @@ export default function Home() {
 
         const logoMap = new Map<string, { url: string; displayName: string }>()
         for (const logo of logos) {
-          const key = normalizeTeamName(logo.baseName || "")
+          const inferredLeague = inferLeagueNameFromPath(logo.relativePath)
+          const rawDisplayName = (logo.baseName || "").replace(/[_-]+/g, " ").trim().normalize("NFC")
+          const displayName = resolveTeamNameAlias(rawDisplayName, inferredLeague)
+          const key = normalizeTeamName(displayName)
           if (!key) continue
-          const displayName = (logo.baseName || "").replace(/[_-]+/g, " ").trim().normalize("NFC")
           const fileQuery = logo.relativePath ? `path=${encodeURIComponent(logo.relativePath)}` : `name=${encodeURIComponent(logo.fileName)}`
           logoMap.set(key, {
             url: `/api/local-logos/file?${fileQuery}`,
@@ -837,9 +840,11 @@ export default function Home() {
         }
 
         setTeams((prev) => {
-          const existingKeys = new Set(prev.map((team) => normalizeTeamName(team.name)))
+          const existingKeys = new Set(
+            prev.map((team) => normalizeTeamName(resolveTeamNameAlias(team.name, team.league))),
+          )
           const next = prev.map((team) => {
-            const key = normalizeTeamName(team.name)
+            const key = normalizeTeamName(resolveTeamNameAlias(team.name, team.league))
             const match = logoMap.get(key)
             if (!match || !isPlaceholderLogo(team.logo)) return team
             return { ...team, logo: match.url }
@@ -866,7 +871,7 @@ export default function Home() {
         setFixtures((prev) =>
           prev.map((fixture) => {
             const updateTeam = (team: Team) => {
-              const key = normalizeTeamName(team.name)
+              const key = normalizeTeamName(resolveTeamNameAlias(team.name, team.league))
               const match = logoMap.get(key)
               if (!match || !isPlaceholderLogo(team.logo)) return team
               return { ...team, logo: match.url }
@@ -1481,7 +1486,7 @@ export default function Home() {
     files.forEach((file) => {
       const fileName = file.name
       // Extraer el nombre del equipo del nombre del archivo (sin extensión)
-      const teamName = fileName.substring(0, fileName.lastIndexOf(".")) || fileName
+      const teamName = resolveTeamNameAlias(fileName.substring(0, fileName.lastIndexOf(".")) || fileName)
 
       const reader = new FileReader()
       reader.onload = (event) => {
@@ -2215,11 +2220,12 @@ export default function Home() {
   // Modificar la función findOrCreateTeam para asegurar que se mantenga la URL del logo
   const findOrCreateTeam = (teamName: string, leagueName: string): Team => {
     const trimmedName = teamName.trim()
-    const normalizedInput = normalizeTeamName(trimmedName)
+    const canonicalInputName = resolveTeamNameAlias(trimmedName, leagueName)
+    const normalizedInput = normalizeTeamName(canonicalInputName)
 
     const candidateData = teams.map((team) => ({
       team,
-      normalized: normalizeTeamName(team.name),
+      normalized: normalizeTeamName(resolveTeamNameAlias(team.name, team.league ?? leagueName)),
     }))
 
     // Coincidencia exacta (normalizada)
@@ -2262,7 +2268,7 @@ export default function Home() {
     }
 
     if (!match) {
-      const baseId = normalizeTeamName(trimmedName) || `team-${Date.now()}`
+      const baseId = normalizeTeamName(canonicalInputName) || `team-${Date.now()}`
       let uniqueId = baseId
       let attempt = 1
       while (teams.some((team) => team.id === uniqueId)) {
@@ -2271,7 +2277,7 @@ export default function Home() {
 
       match = {
         id: uniqueId,
-        name: trimmedName,
+        name: canonicalInputName,
         logo: "/placeholder.svg?height=100&width=100",
         league: leagueName,
       }
@@ -2532,8 +2538,8 @@ export default function Home() {
     const newFixtures: Match[] = []
     const seenFixtureKeys = new Set(
       fixtures.map((fixture) => {
-        const homeKey = normalizeTeamName(fixture.homeTeam.name)
-        const awayKey = normalizeTeamName(fixture.awayTeam.name)
+        const homeKey = normalizeTeamName(resolveTeamNameAlias(fixture.homeTeam.name, fixture.league))
+        const awayKey = normalizeTeamName(resolveTeamNameAlias(fixture.awayTeam.name, fixture.league))
         return `${fixture.league}|${fixture.date}|${fixture.time}|${homeKey}|${awayKey}`.toLowerCase()
       }),
     )
@@ -2594,8 +2600,8 @@ export default function Home() {
           leagues.find((l) => l.name.toLowerCase() === currentLeague.toLowerCase())?.color || "#000000"
 
         const fixtureKey = `${currentLeague}|${day.padStart(2, "0")}-${month}|${time}|${normalizeTeamName(
-          homeTeamName,
-        )}|${normalizeTeamName(awayTeamName)}`.toLowerCase()
+          homeTeam.name,
+        )}|${normalizeTeamName(awayTeam.name)}`.toLowerCase()
         if (seenFixtureKeys.has(fixtureKey)) {
           return
         }
